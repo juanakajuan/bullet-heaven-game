@@ -83,7 +83,7 @@ fn debug_shortcuts(
     mut settings: ResMut<DeveloperSettings>,
     mut run: Option<ResMut<RunStats>>,
     catalog: Res<ContentCatalog>,
-    player: Query<&Transform, With<Player>>,
+    mut players: Query<(&Transform, &mut Player)>,
     mut commands: Commands,
     mut experience: MessageWriter<ExperienceCollected>,
 ) {
@@ -95,6 +95,9 @@ fn debug_shortcuts(
     }
     if keys.just_pressed(KeyCode::F3) {
         settings.invulnerable = !settings.invulnerable;
+        for (_, mut player) in &mut players {
+            player.invulnerability_remaining = if settings.invulnerable { 1.0 } else { 0.0 };
+        }
     }
     if keys.just_pressed(KeyCode::F4)
         && let Some(run) = &mut run
@@ -102,7 +105,7 @@ fn debug_shortcuts(
         run.elapsed_seconds = (run.elapsed_seconds + 60.0).min(catalog.config.run.duration_seconds);
     }
     if keys.just_pressed(KeyCode::F5)
-        && let Ok(player) = player.single()
+        && let Ok((player, _)) = players.single_mut()
         && !catalog.config.enemies.is_empty()
     {
         const COPIES_PER_ARCHETYPE: usize = 4;

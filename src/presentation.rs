@@ -12,6 +12,7 @@ use crate::{
 };
 
 const PLAYER_COLOR: Color = Color::srgb(0.22, 0.72, 0.96);
+const INVULNERABLE_PLAYER_COLOR: Color = Color::srgb(0.72, 0.94, 1.0);
 const PROJECTILE_COLOR: Color = Color::srgb(0.42, 0.92, 1.0);
 const ORBIT_COLOR: Color = Color::srgb(1.0, 0.76, 0.24);
 const HOSTILE_PROJECTILE_COLOR: Color = Color::srgb(1.0, 0.26, 0.36);
@@ -37,23 +38,24 @@ pub struct PresentationPlugin;
 
 impl Plugin for PresentationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_camera).add_systems(
-            Update,
-            (
-                add_arena_visuals,
-                add_player_visual,
-                add_enemy_visuals,
-                add_projectile_visuals,
-                add_pickup_visuals,
-                follow_player_camera,
-                create_hit_feedback,
-                update_hit_flashes,
-                update_particles,
-                show_player_invulnerability,
-                show_enemy_telegraphs,
-                show_boss_telegraph,
-            ),
-        );
+        app.add_systems(Startup, setup_camera)
+            .add_systems(
+                Update,
+                (
+                    add_arena_visuals,
+                    add_player_visual,
+                    add_enemy_visuals,
+                    add_projectile_visuals,
+                    add_pickup_visuals,
+                    follow_player_camera,
+                    create_hit_feedback,
+                    update_hit_flashes,
+                    update_particles,
+                    show_enemy_telegraphs,
+                    show_boss_telegraph,
+                ),
+            )
+            .add_systems(PostUpdate, show_player_invulnerability);
     }
 }
 
@@ -313,15 +315,10 @@ fn update_particles(
     }
 }
 
-fn show_player_invulnerability(
-    time: Res<Time>,
-    mut players: Query<(&Player, &mut Sprite), Without<HitFlash>>,
-) {
+fn show_player_invulnerability(mut players: Query<(&Player, &mut Sprite), Without<HitFlash>>) {
     for (player, mut sprite) in &mut players {
-        sprite.color = if player.invulnerability_remaining > 0.0
-            && (time.elapsed_secs() * 18.0) as i32 % 2 == 0
-        {
-            Color::srgba(0.22, 0.72, 0.96, 0.28)
+        sprite.color = if player.invulnerability_remaining > 0.0 {
+            INVULNERABLE_PLAYER_COLOR
         } else {
             PLAYER_COLOR
         };
