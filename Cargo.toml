@@ -2,5 +2,37 @@
 name = "bullet-heaven-game"
 version = "0.1.0"
 edition = "2024"
+description = "An extensible bullet-heaven MVP built with Bevy"
+license = "MIT"
+rust-version = "1.95"
 
 [dependencies]
+bevy = { version = "0.19.0", default-features = false, features = [
+    "default_app",
+    "bevy_winit",
+    "default_font",
+    "multi_threaded",
+    "x11",
+    "wayland",
+    "sysinfo_plugin",
+    "2d_bevy_render",
+    "ui_bevy_render",
+    "scene",
+    "picking",
+    "bevy_ui_widgets",
+] }
+directories = "6.0.0"
+rand = { version = "0.10.0", default-features = false, features = ["std", "std_rng"] }
+rand_chacha = "0.10.0"
+ron = "0.12.0"
+serde = { version = "1.0.229", features = ["derive"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

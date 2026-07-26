@@ -1,0 +1,31 @@
+name: Linux Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxrandr-dev
+      - run: cargo build --release --locked
+      - name: Assemble archive
+        shell: bash
+        run: |
+          mkdir -p dist/bullet-heaven-game/assets
+          cp target/release/bullet-heaven-game dist/bullet-heaven-game/
+          cp -R assets/config dist/bullet-heaven-game/assets/
+          cp README.md LICENSE dist/bullet-heaven-game/
+          tar -C dist -czf dist/bullet-heaven-game-linux-x86_64.tar.gz bullet-heaven-game
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/bullet-heaven-game-linux-x86_64.tar.gz
