@@ -1,13 +1,13 @@
 //! Visual adapters for simulation state.
 
-use bevy::prelude::*;
+use bevy::{prelude::*, sprite::Text2dShadow};
 
 use crate::{
     ContentCatalog, GameState,
     config::EnemyShape,
     gameplay::{
-        ArenaMarker, BossBrain, Collider, DamageApplied, Enemy, HostileProjectile, Orbiting,
-        Pickup, Player, PlayerProjectile, RunEntity,
+        ArenaMarker, BossBrain, Collider, DamageApplied, Enemy, EnemyBrain, HostileProjectile,
+        Orbiting, Pickup, Player, PlayerProjectile, RunEntity,
     },
 };
 
@@ -50,6 +50,7 @@ impl Plugin for PresentationPlugin {
                 update_hit_flashes,
                 update_particles,
                 show_player_invulnerability,
+                show_enemy_telegraphs,
                 show_boss_telegraph,
             ),
         );
@@ -154,9 +155,36 @@ fn add_enemy_visuals(
         if config.shape == EnemyShape::Diamond {
             transform.rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_4);
         }
+        let marker = if enemy.is_boss {
+            '!'.to_string()
+        } else {
+            config.marker().to_string()
+        };
+        let marker_rotation = if config.shape == EnemyShape::Diamond {
+            Quat::from_rotation_z(-std::f32::consts::FRAC_PI_4)
+        } else {
+            Quat::IDENTITY
+        };
         commands
             .entity(entity)
-            .insert(Sprite::from_color(color, size));
+            .insert(Sprite::from_color(color, size))
+            .with_child((
+                Text2d::new(marker),
+                TextFont {
+                    font_size: FontSize::Px(if enemy.is_boss { 28.0 } else { 15.0 }),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Text2dShadow {
+                    offset: Vec2::new(1.0, -1.0),
+                    color: Color::BLACK,
+                },
+                Transform {
+                    translation: Vec3::Z,
+                    rotation: marker_rotation,
+                    ..default()
+                },
+            ));
     }
 }
 
@@ -309,6 +337,21 @@ fn show_boss_telegraph(
             Color::WHITE
         } else {
             Color::srgb(0.95, 0.24, 0.36)
+        };
+    }
+}
+
+fn show_enemy_telegraphs(
+    time: Res<Time>,
+    catalog: Res<ContentCatalog>,
+    mut enemies: Query<(&Enemy, &EnemyBrain, &mut Sprite), Without<HitFlash>>,
+) {
+    for (enemy, brain, mut sprite) in &mut enemies {
+        let color = catalog.enemy(&enemy.id).color;
+        sprite.color = if brain.is_telegraphing() && (time.elapsed_secs() * 14.0) as i32 % 2 == 0 {
+            Color::WHITE
+        } else {
+            Color::srgb(color[0], color[1], color[2])
         };
     }
 }

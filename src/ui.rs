@@ -36,6 +36,9 @@ struct StatsText;
 struct LoadoutText;
 
 #[derive(Component)]
+struct EnemyKeyText;
+
+#[derive(Component)]
 struct HealthFill;
 
 #[derive(Component)]
@@ -593,10 +596,22 @@ fn update_settings_values(
     }
 }
 
-fn ensure_hud(mut commands: Commands, existing: Query<(), With<HudRoot>>) {
+fn ensure_hud(
+    mut commands: Commands,
+    catalog: Res<ContentCatalog>,
+    existing: Query<(), With<HudRoot>>,
+) {
     if !existing.is_empty() {
         return;
     }
+
+    let enemy_key = catalog
+        .config
+        .enemies
+        .iter()
+        .map(|enemy| format!("{} {}", enemy.marker(), enemy.name))
+        .collect::<Vec<_>>()
+        .join("   ");
 
     commands
         .spawn((
@@ -641,6 +656,18 @@ fn ensure_hud(mut commands: Commands, existing: Query<(), With<HudRoot>>) {
                     position_type: PositionType::Absolute,
                     right: px(20),
                     top: px(18),
+                    ..default()
+                },
+            ));
+            root.spawn((
+                EnemyKeyText,
+                Text::new(format!("ENEMIES   {enemy_key}")),
+                text_font(14.0),
+                TextColor(MUTED_TEXT),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(20),
+                    bottom: px(48),
                     ..default()
                 },
             ));

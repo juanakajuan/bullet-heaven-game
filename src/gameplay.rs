@@ -16,14 +16,16 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::{
     ContentCatalog, EnemyId, GameState, GameplaySet, UpgradeId, WeaponId,
-    config::{EnemyConfig, UpgradeKind, WeaponKind},
+    config::{EnemyBehavior, EnemyConfig, UpgradeKind, WeaponKind},
     input::MovementInput,
 };
 
 const WEAPON_SLOT_LIMIT: usize = 3;
 const SPATIAL_CELL_SIZE: f32 = 128.0;
 const PROJECTILE_LIFETIME: f32 = 2.4;
+const ENEMY_PROJECTILE_LIFETIME: f32 = 6.0;
 const BOSS_PROJECTILE_LIFETIME: f32 = 7.0;
+const SHOOTER_DISTANCE_TOLERANCE: f32 = 40.0;
 
 #[derive(Component, Debug)]
 pub(crate) struct RunEntity;
@@ -41,6 +43,67 @@ pub(crate) struct Enemy {
     pub id: EnemyId,
     pub xp: u32,
     pub is_boss: bool,
+}
+
+#[derive(Component, Debug)]
+pub(crate) struct EnemyBrain {
+    state: EnemyBrainState,
+}
+
+#[derive(Debug)]
+enum EnemyBrainState {
+    Pursuer,
+    Dasher { phase: DashPhase },
+    Shooter { cooldown_remaining: f32 },
+}
+
+#[derive(Debug)]
+enum DashPhase {
+    Pursuing { cooldown_remaining: f32 },
+    Telegraphing { remaining: f32, direction: Vec2 },
+    Charging { remaining: f32, direction: Vec2 },
+}
+
+impl EnemyBrain {
+    fn from_behavior(behavior: EnemyBehavior) -> Self {
+        let state = match behavior {
+            EnemyBehavior::Pursuer => EnemyBrainState::Pursuer,
+            EnemyBehavior::Dasher {
+                cooldown_seconds, ..
+            } => EnemyBrainState::Dasher {
+                phase: DashPhase::Pursuing {
+                    cooldown_remaining: cooldown_seconds,
+                },
+            },
+            EnemyBehavior::Shooter {
+                cooldown_seconds, ..
+            } => EnemyBrainState::Shooter {
+                cooldown_remaining: cooldown_seconds,
+            },
+        };
+        Self { state }
+    }
+
+    fn matches(&self, behavior: EnemyBehavior) -> bool {
+        matches!(
+            (&self.state, behavior),
+            (EnemyBrainState::Pursuer, EnemyBehavior::Pursuer)
+                | (EnemyBrainState::Dasher { .. }, EnemyBehavior::Dasher { .. })
+                | (
+                    EnemyBrainState::Shooter { .. },
+                    EnemyBehavior::Shooter { .. }
+                )
+        )
+    }
+
+    pub(crate) fn is_telegraphing(&self) -> bool {
+        matches!(
+            &self.state,
+            EnemyBrainState::Dasher {
+                phase: DashPhase::Telegraphing { .. }
+            }
+        )
+    }
 }
 
 #[derive(Component, Debug, Clone, Copy)]
@@ -281,9 +344,13 @@ impl Plugin for GameplayPlugin {
                     update_boss.in_set(GameplaySet::Movement),
                     move_projectiles.in_set(GameplaySet::Movement),
                     move_and_collect_pickups.in_set(GameplaySet::Movement),
-                    tick_weapons.in_set(GameplaySet::Attacks),
-                    update_orbits.in_set(GameplaySet::Attacks),
-                    boss_burst.in_set(GameplaySet::Attacks),
+                    (
+                        tick_weapons,
+                        update_orbits,
+                        regular_enemy_attacks,
+                        boss_burst,
+                    )
+                        .in_set(GameplaySet::Attacks),
                     rebuild_spatial_grid.in_set(GameplaySet::Collision),
                     collide_player_projectiles
                         .in_set(GameplaySet::Collision)
@@ -506,7 +573,7 @@ pub(crate) fn spawn_enemy(
     position: Vec2,
     is_boss: bool,
 ) {
-    commands.spawn((
+    let mut entity = commands.spawn((
         RunEntity,
         Enemy {
             id: enemy.id.clone(),
@@ -525,6 +592,9 @@ pub(crate) fn spawn_enemy(
         Transform::from_xyz(position.x, position.y, if is_boss { 7.0 } else { 5.0 }),
         Visibility::default(),
     ));
+    if !is_boss {
+        entity.insert(EnemyBrain::from_behavior(enemy.behavior));
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -533,18 +603,102 @@ fn move_enemies(
     catalog: Res<ContentCatalog>,
     player: Single<&Transform, (With<Player>, Without<Enemy>)>,
     mut enemies: Query<
-        (&Enemy, &mut Transform, &mut Velocity),
+        (&Enemy, &mut EnemyBrain, &mut Transform, &mut Velocity),
         (Without<Player>, Without<BossBrain>),
     >,
 ) {
+    let dt = fixed_time.delta_secs();
     let player_position = player.translation.truncate();
-    for (enemy, mut transform, mut velocity) in &mut enemies {
+    for (enemy, mut brain, mut transform, mut velocity) in &mut enemies {
         if enemy.is_boss {
             continue;
         }
-        let direction = (player_position - transform.translation.truncate()).normalize_or_zero();
-        velocity.0 = direction * catalog.enemy(&enemy.id).move_speed;
-        transform.translation += velocity.0.extend(0.0) * fixed_time.delta_secs();
+
+        let definition = catalog.enemy(&enemy.id);
+        if !brain.matches(definition.behavior) {
+            *brain = EnemyBrain::from_behavior(definition.behavior);
+        }
+
+        let position = transform.translation.truncate();
+        let offset = player_position - position;
+        let direction = offset.normalize_or_zero();
+        match (definition.behavior, &mut brain.state) {
+            (EnemyBehavior::Pursuer, EnemyBrainState::Pursuer) => {
+                velocity.0 = direction * definition.move_speed;
+            }
+            (
+                EnemyBehavior::Dasher {
+                    cooldown_seconds,
+                    telegraph_seconds,
+                    dash_speed,
+                    dash_seconds,
+                },
+                EnemyBrainState::Dasher { phase },
+            ) => match phase {
+                DashPhase::Pursuing { cooldown_remaining } => {
+                    *cooldown_remaining -= dt;
+                    velocity.0 = direction * definition.move_speed;
+                    if *cooldown_remaining <= 0.0 {
+                        *phase = DashPhase::Telegraphing {
+                            remaining: telegraph_seconds,
+                            direction,
+                        };
+                        velocity.0 = Vec2::ZERO;
+                    }
+                }
+                DashPhase::Telegraphing {
+                    remaining,
+                    direction: dash_direction,
+                } => {
+                    *remaining -= dt;
+                    *dash_direction = direction;
+                    velocity.0 = Vec2::ZERO;
+                    if *remaining <= 0.0 {
+                        *phase = DashPhase::Charging {
+                            remaining: dash_seconds,
+                            direction: *dash_direction,
+                        };
+                    }
+                }
+                DashPhase::Charging {
+                    remaining,
+                    direction: dash_direction,
+                } => {
+                    *remaining -= dt;
+                    velocity.0 = *dash_direction * dash_speed;
+                    if *remaining <= 0.0 {
+                        *phase = DashPhase::Pursuing {
+                            cooldown_remaining: cooldown_seconds,
+                        };
+                    }
+                }
+            },
+            (
+                EnemyBehavior::Shooter {
+                    stand_off_distance, ..
+                },
+                EnemyBrainState::Shooter { .. },
+            ) => {
+                velocity.0 = if offset.length() > stand_off_distance + SHOOTER_DISTANCE_TOLERANCE {
+                    direction * definition.move_speed
+                } else if offset.length()
+                    < (stand_off_distance - SHOOTER_DISTANCE_TOLERANCE).max(0.0)
+                {
+                    -direction * definition.move_speed
+                } else {
+                    Vec2::ZERO
+                };
+            }
+            _ => unreachable!("enemy brain was synchronized with its authored behavior"),
+        }
+
+        transform.translation += velocity.0.extend(0.0) * dt;
+        let half = Vec2::new(
+            catalog.config.arena.width * 0.5 - definition.radius,
+            catalog.config.arena.height * 0.5 - definition.radius,
+        );
+        transform.translation.x = transform.translation.x.clamp(-half.x, half.x);
+        transform.translation.y = transform.translation.y.clamp(-half.y, half.y);
     }
 }
 
@@ -878,6 +1032,59 @@ fn boss_burst(
                 Visibility::default(),
             ));
         }
+    }
+}
+
+fn regular_enemy_attacks(
+    mut commands: Commands,
+    fixed_time: Res<Time<Fixed>>,
+    catalog: Res<ContentCatalog>,
+    player: Single<&Transform, (With<Player>, Without<Enemy>)>,
+    mut enemies: Query<(&Enemy, &Transform, &mut EnemyBrain)>,
+    run_entities: Query<(), With<RunEntity>>,
+) {
+    let dt = fixed_time.delta_secs();
+    let player_position = player.translation.truncate();
+    let mut available_entities = catalog
+        .config
+        .run
+        .max_active_entities
+        .saturating_sub(run_entities.iter().count());
+
+    for (enemy, transform, mut brain) in &mut enemies {
+        let EnemyBrainState::Shooter { cooldown_remaining } = &mut brain.state else {
+            continue;
+        };
+        let EnemyBehavior::Shooter {
+            cooldown_seconds,
+            projectile_damage,
+            projectile_speed,
+            ..
+        } = catalog.enemy(&enemy.id).behavior
+        else {
+            continue;
+        };
+
+        *cooldown_remaining -= dt;
+        if *cooldown_remaining > 0.0 || available_entities == 0 {
+            continue;
+        }
+        *cooldown_remaining += cooldown_seconds;
+        available_entities -= 1;
+
+        let position = transform.translation.truncate();
+        let direction = (player_position - position).normalize_or_zero();
+        commands.spawn((
+            RunEntity,
+            HostileProjectile {
+                damage: projectile_damage,
+                lifetime: ENEMY_PROJECTILE_LIFETIME,
+            },
+            Velocity(direction * projectile_speed),
+            Collider { radius: 7.0 },
+            Transform::from_xyz(position.x, position.y, 6.0),
+            Visibility::default(),
+        ));
     }
 }
 
@@ -1344,6 +1551,10 @@ mod tests {
     }
 
     fn headless_app() -> App {
+        headless_app_with_catalog(catalog())
+    }
+
+    fn headless_app_with_catalog(catalog: ContentCatalog) -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .add_plugins(StatesPlugin)
@@ -1352,10 +1563,53 @@ mod tests {
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
                 1.0 / 60.0,
             )))
-            .insert_resource(catalog())
+            .insert_resource(catalog)
             .insert_resource(MovementInput::default())
             .add_plugins(GameplayPlugin);
         app
+    }
+
+    fn configure_opening_stage(catalog: &mut ContentCatalog, enemy_id: &str) {
+        catalog.config.stages[0].spawns_per_second = 60.0;
+        catalog.config.stages[0].enemy_cap = 1;
+        catalog.config.stages[0].weights = vec![crate::SpawnWeight {
+            enemy: EnemyId(enemy_id.into()),
+            weight: 1,
+        }];
+        catalog
+            .config
+            .enemies
+            .iter_mut()
+            .find(|enemy| enemy.id.0 == enemy_id)
+            .expect("test enemy should exist")
+            .max_health = 10_000.0;
+    }
+
+    fn single_regular_enemy(app: &mut App) -> Entity {
+        let world = app.world_mut();
+        let mut enemies = world.query_filtered::<Entity, With<EnemyBrain>>();
+        enemies.single(world).expect("one regular enemy")
+    }
+
+    fn set_position_and_tick(app: &mut App, entity: Entity, position: Vec2) -> Vec2 {
+        let mut transform = app
+            .world_mut()
+            .get_mut::<Transform>(entity)
+            .expect("entity should have a transform");
+        transform.translation.x = position.x;
+        transform.translation.y = position.y;
+        app.update();
+        app.world()
+            .get::<Transform>(entity)
+            .expect("entity should remain alive")
+            .translation
+            .truncate()
+    }
+
+    fn player_health(app: &mut App) -> Health {
+        let world = app.world_mut();
+        let mut players = world.query_filtered::<&Health, With<Player>>();
+        *players.single(world).expect("one player")
     }
 
     fn start_run(app: &mut App, seed: u64) {
@@ -1443,6 +1697,189 @@ mod tests {
             .iter(app.world())
             .count();
         assert!(enemy_count > 0);
+    }
+
+    #[test]
+    fn dasher_telegraphs_then_charges_in_its_aimed_direction() {
+        let mut catalog = catalog();
+        configure_opening_stage(&mut catalog, "runner");
+        let runner = catalog
+            .config
+            .enemies
+            .iter_mut()
+            .find(|enemy| enemy.id.0 == "runner")
+            .expect("runner should exist");
+        let EnemyBehavior::Dasher {
+            cooldown_seconds,
+            telegraph_seconds,
+            dash_speed,
+            dash_seconds,
+        } = &mut runner.behavior
+        else {
+            panic!("runner should use dasher behavior");
+        };
+        *cooldown_seconds = 0.05;
+        *telegraph_seconds = 0.05;
+        *dash_speed = 300.0;
+        *dash_seconds = 0.5;
+        let dash_speed = *dash_speed;
+
+        let mut app = headless_app_with_catalog(catalog);
+        start_run(&mut app, 17);
+
+        let mut observed_telegraph = false;
+        let mut charge = None;
+        for _ in 0..60 {
+            app.update();
+            let world = app.world_mut();
+            let mut enemies = world.query::<(Entity, &EnemyBrain, &Transform)>();
+            for (entity, brain, transform) in enemies.iter(world) {
+                observed_telegraph |= brain.is_telegraphing();
+                if let EnemyBrainState::Dasher {
+                    phase: DashPhase::Charging { direction, .. },
+                } = &brain.state
+                {
+                    charge = Some((entity, *direction, transform.translation.truncate()));
+                    break;
+                }
+            }
+            if charge.is_some() {
+                break;
+            }
+        }
+
+        assert!(
+            observed_telegraph,
+            "dasher should telegraph before charging"
+        );
+        let (dasher, aimed_direction, charge_position) =
+            charge.expect("dasher should enter its charge phase");
+
+        let diverted_player_position = Vec2::new(-aimed_direction.y, aimed_direction.x) * 500.0;
+        {
+            let world = app.world_mut();
+            let mut players = world.query_filtered::<&mut Transform, With<Player>>();
+            let mut player = players.single_mut(world).expect("one player");
+            player.translation.x = diverted_player_position.x;
+            player.translation.y = diverted_player_position.y;
+        }
+        app.update();
+
+        let brain = app
+            .world()
+            .get::<EnemyBrain>(dasher)
+            .expect("dasher should remain alive");
+        let EnemyBrainState::Dasher {
+            phase:
+                DashPhase::Charging {
+                    direction: charging_direction,
+                    ..
+                },
+        } = &brain.state
+        else {
+            panic!("dasher should still be charging");
+        };
+        assert!(
+            charging_direction.distance(aimed_direction) < 0.0001,
+            "charge direction should remain locked after the telegraph"
+        );
+
+        let actual_position = app
+            .world()
+            .get::<Transform>(dasher)
+            .expect("dasher should have a transform")
+            .translation
+            .truncate();
+        let expected_position = charge_position + aimed_direction * dash_speed / 60.0;
+        assert!(
+            actual_position.distance(expected_position) < 0.01,
+            "dasher should move at its authored charge speed"
+        );
+    }
+
+    #[test]
+    fn shooter_moves_into_and_holds_its_standoff_band() {
+        let mut catalog = catalog();
+        configure_opening_stage(&mut catalog, "shooter");
+        let mut app = headless_app_with_catalog(catalog);
+        start_run(&mut app, 23);
+        let shooter = single_regular_enemy(&mut app);
+
+        let far_position = set_position_and_tick(&mut app, shooter, Vec2::new(600.0, 0.0));
+        assert!(
+            far_position.x < 600.0,
+            "shooter should approach from outside its standoff band"
+        );
+
+        let near_position = set_position_and_tick(&mut app, shooter, Vec2::new(100.0, 0.0));
+        assert!(
+            near_position.x > 100.0,
+            "shooter should retreat from inside its standoff band"
+        );
+
+        let held_position = set_position_and_tick(&mut app, shooter, Vec2::new(390.0, 0.0));
+        assert!(
+            held_position.distance(Vec2::new(390.0, 0.0)) < 0.001,
+            "shooter should hold position inside its standoff band"
+        );
+    }
+
+    #[test]
+    fn shooter_projectiles_are_aimed_and_damage_the_player() {
+        let mut catalog = catalog();
+        configure_opening_stage(&mut catalog, "shooter");
+        let shooter = catalog
+            .config
+            .enemies
+            .iter_mut()
+            .find(|enemy| enemy.id.0 == "shooter")
+            .expect("shooter should exist");
+        let EnemyBehavior::Shooter {
+            cooldown_seconds,
+            projectile_damage,
+            ..
+        } = &mut shooter.behavior
+        else {
+            panic!("shooter should use shooter behavior");
+        };
+        *cooldown_seconds = 0.05;
+        let projectile_damage = *projectile_damage;
+
+        let mut app = headless_app_with_catalog(catalog);
+        start_run(&mut app, 29);
+        let shooter = single_regular_enemy(&mut app);
+        {
+            let mut transform = app
+                .world_mut()
+                .get_mut::<Transform>(shooter)
+                .expect("shooter should have a transform");
+            transform.translation.x = 100.0;
+            transform.translation.y = 0.0;
+        }
+
+        let starting_health = player_health(&mut app);
+        let mut observed_aimed_projectile = false;
+        for _ in 0..90 {
+            app.update();
+            let world = app.world_mut();
+            let mut projectiles = world.query_filtered::<&Velocity, With<HostileProjectile>>();
+            observed_aimed_projectile |= projectiles
+                .iter(world)
+                .any(|velocity| velocity.x < 0.0 && velocity.y.abs() < 0.001);
+            if player_health(&mut app).current < starting_health.current {
+                break;
+            }
+        }
+
+        assert!(
+            observed_aimed_projectile,
+            "shooter should aim a projectile toward the player"
+        );
+        let damaged_health = player_health(&mut app);
+        assert!(
+            (starting_health.current - damaged_health.current - projectile_damage).abs() < 0.001,
+            "one projectile should apply its authored damage"
+        );
     }
 
     #[test]

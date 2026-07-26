@@ -16,9 +16,9 @@ mod ui;
 use bevy::prelude::*;
 
 pub use config::{
-    ArenaConfig, BossConfig, ConfigError, ContentCatalog, EnemyConfig, EnemyId, EnemyShape,
-    GameConfig, PlayerConfig, RunConfig, SpawnWeight, StageConfig, UpgradeConfig, UpgradeId,
-    UpgradeKind, WeaponConfig, WeaponId, WeaponKind, WeaponLevelConfig,
+    ArenaConfig, BossConfig, ConfigError, ContentCatalog, EnemyBehavior, EnemyConfig, EnemyId,
+    EnemyShape, GameConfig, PlayerConfig, RunConfig, SpawnWeight, StageConfig, UpgradeConfig,
+    UpgradeId, UpgradeKind, WeaponConfig, WeaponId, WeaponKind, WeaponLevelConfig,
 };
 pub use persistence::Preferences;
 

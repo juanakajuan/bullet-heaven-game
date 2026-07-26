@@ -63,6 +63,10 @@ carry rule data (`Health`, `Collider`, `Enemy`, projectiles); presentation
 systems attach sprites and react to `DamageApplied`. This keeps headless tests
 on the same simulation seam used by the game.
 
+Regular enemy definitions select a pursuer, dasher, or shooter behavior.
+Authored values live in the content catalog while private `EnemyBrain` state
+tracks cooldowns and phases. Presentation reads only the telegraph state.
+
 ## Run ownership and cleanup
 
 Every run-owned entity carries `RunEntity`. Starting a requested run or

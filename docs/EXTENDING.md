@@ -1,69 +1,64 @@
-# Extending the template
+# Extension task list
 
 ## Add a regular enemy
 
-1. Add an entry to `enemies` in `assets/config/game.ron`.
-2. Give it a unique ID, stats, color, and geometric shape.
-3. Reference the ID from one or more stage weight tables.
-4. Run `cargo test config::tests` or press F9 from the main menu.
-
-All regular enemies currently use pursuit behavior. A new movement behavior is
-a rule change: add an authored behavior enum to `EnemyConfig`, then handle it
-inside the enemy movement module rather than branching on an ID.
+- [ ] Add an entry to `enemies` in the RON catalog.
+- [ ] Give it a unique ID, stats, color, shape, and behavior.
+- [ ] Reference its ID from one or more stage weight tables.
+- [ ] Reuse `pursuer`, `dasher`, or `shooter` when one fits.
+- [ ] For a new behavior, add an `EnemyBehavior` variant and validation.
+- [ ] Keep runtime cooldowns and phases in private `EnemyBrain` state.
+- [ ] Add a focused headless behavioral test.
 
 ## Add a spawn stage
 
-Append a stage with a strictly increasing `starts_at_seconds`, positive spawn
-rate, cap, and nonzero weights. The active stage is the last stage whose start
-time has passed.
+- [ ] Append a stage with a strictly increasing `starts_at_seconds`.
+- [ ] Set a positive spawn rate and enemy cap.
+- [ ] Add nonzero enemy weights.
+- [ ] Confirm the stage becomes active after its start time.
 
 ## Add a stat upgrade
 
-The schema currently maps six `UpgradeKind` variants to `ResolvedStats`.
-
-1. Add the new enum variant and resolved-stat field.
-2. Handle it in `resolve_stats`.
-3. Add its five authored values to the RON catalog.
-4. Add a focused stat-resolution test.
-
-Keep resolved values derived from base configuration; do not mutate player
-speed, damage, or health in multiple selection call sites.
+- [ ] Add an `UpgradeKind` variant and corresponding `ResolvedStats` field.
+- [ ] Handle the variant in `resolve_stats`.
+- [ ] Add five authored values to the RON catalog.
+- [ ] Keep the resolved value derived from base configuration.
+- [ ] Add a focused stat-resolution test.
 
 ## Add a weapon
 
-For another instance of an existing behavior, add a weapon entry using `bolt`,
-`nova`, or `orbit`.
-
-For a genuinely different behavior:
-
-1. Add a `WeaponKind` variant.
-2. Implement one focused attack system or a focused branch in `tick_weapons`.
-3. Reuse projectile, cooldown, targeting, damage, and collision primitives.
-4. Put the system in `GameplaySet::Attacks`.
-5. Add authored five-level values and a headless behavioral test.
-
-Configuration controls values and progression; it is intentionally not a
-general scripting language.
+- [ ] Decide whether to reuse `bolt`, `nova`, or `orbit` behavior.
+- [ ] Add a weapon entry to the RON catalog.
+- [ ] For a new behavior, add a `WeaponKind` variant.
+- [ ] Implement one focused attack system or branch in `tick_weapons`.
+- [ ] Reuse projectile, cooldown, targeting, damage, and collision primitives.
+- [ ] Put new attack logic in `GameplaySet::Attacks`.
+- [ ] Add five authored levels.
+- [ ] Add a headless behavioral test.
 
 ## Add a gameplay message
 
-Use a typed Bevy `Message` when multiple systems or presentation adapters need
-to react to an occurrence. Components or resources remain preferable for
-durable state. Register the message inside the plugin that owns its meaning.
+- [ ] Confirm multiple systems or presentation adapters need the occurrence.
+- [ ] Define a typed Bevy `Message`.
+- [ ] Register it inside the plugin that owns its meaning.
+- [ ] Keep durable state in components or resources.
 
 ## Add a screen
 
-Add a `GameState` variant, enter/exit systems that create and remove a marked
-root entity, and menu actions that request state transitions. Do not let UI
-systems directly advance gameplay time.
+- [ ] Add a `GameState` variant.
+- [ ] Add enter and exit systems for a marked root entity.
+- [ ] Add menu actions that request the required state transitions.
+- [ ] Keep gameplay-time advancement out of UI systems.
 
 ## Replace primitive art
 
-Simulation entities do not own sprites. Replace or extend the `presentation`
-systems that react to `Added<Player>`, `Added<Enemy>`, projectiles, and pickups.
-Gameplay tests will continue to run without the new assets.
+- [ ] Replace or extend the `presentation` systems for players and enemies.
+- [ ] Replace or extend projectile and pickup presentation.
+- [ ] Keep sprites out of simulation entities.
+- [ ] Confirm headless gameplay tests still pass without assets.
 
-## Add audio later
+## Add audio
 
-Create an audio presentation plugin that reads durable state and typed gameplay
-messages. It should not be required by simulation systems or headless tests.
+- [ ] Create an audio presentation plugin.
+- [ ] Drive audio from durable state and typed gameplay messages.
+- [ ] Keep audio optional for simulation systems and headless tests.

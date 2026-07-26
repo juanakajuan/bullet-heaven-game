@@ -136,6 +136,18 @@ pub struct EnemyConfig {
     pub xp: u32,
     pub color: [f32; 3],
     pub shape: EnemyShape,
+    #[serde(default)]
+    pub behavior: EnemyBehavior,
+}
+
+impl EnemyConfig {
+    pub fn marker(&self) -> char {
+        self.name
+            .chars()
+            .find(|character| character.is_alphanumeric())
+            .map(|character| character.to_ascii_uppercase())
+            .unwrap_or('?')
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -144,6 +156,25 @@ pub enum EnemyShape {
     Diamond,
     Tall,
     Square,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnemyBehavior {
+    #[default]
+    Pursuer,
+    Dasher {
+        cooldown_seconds: f32,
+        telegraph_seconds: f32,
+        dash_speed: f32,
+        dash_seconds: f32,
+    },
+    Shooter {
+        stand_off_distance: f32,
+        cooldown_seconds: f32,
+        projectile_damage: f32,
+        projectile_speed: f32,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -289,6 +320,13 @@ impl ContentCatalog {
                 ));
             }
         }
+        for enemy in config
+            .enemies
+            .iter()
+            .chain(std::iter::once(&config.boss.enemy))
+        {
+            validate_enemy(enemy, &mut errors);
+        }
         for (index, stage) in config.stages.iter().enumerate() {
             if stage.spawns_per_second <= 0.0 || stage.weights.is_empty() {
                 errors.push(format!("stage {index} must have a spawn rate and weights"));
@@ -319,6 +357,48 @@ impl ContentCatalog {
             upgrade_indices,
             enemy_indices,
         })
+    }
+}
+
+fn validate_enemy(enemy: &EnemyConfig, errors: &mut Vec<String>) {
+    if enemy.max_health <= 0.0
+        || enemy.move_speed <= 0.0
+        || enemy.contact_damage <= 0.0
+        || enemy.radius <= 0.0
+    {
+        errors.push(format!("enemy `{}` contains a non-positive stat", enemy.id));
+    }
+
+    let valid_behavior = match enemy.behavior {
+        EnemyBehavior::Pursuer => true,
+        EnemyBehavior::Dasher {
+            cooldown_seconds,
+            telegraph_seconds,
+            dash_speed,
+            dash_seconds,
+        } => {
+            cooldown_seconds > 0.0
+                && telegraph_seconds > 0.0
+                && dash_speed > 0.0
+                && dash_seconds > 0.0
+        }
+        EnemyBehavior::Shooter {
+            stand_off_distance,
+            cooldown_seconds,
+            projectile_damage,
+            projectile_speed,
+        } => {
+            stand_off_distance > 0.0
+                && cooldown_seconds > 0.0
+                && projectile_damage > 0.0
+                && projectile_speed > 0.0
+        }
+    };
+    if !valid_behavior {
+        errors.push(format!(
+            "enemy `{}` behavior contains a non-positive value",
+            enemy.id
+        ));
     }
 }
 
@@ -407,5 +487,16 @@ mod tests {
         let source = EMBEDDED_CONFIG.replace("enemy: \"chaser\"", "enemy: \"missing\"");
         let error = ContentCatalog::from_ron(&source).expect_err("reference should be rejected");
         assert!(error.to_string().contains("missing enemy `missing`"));
+    }
+
+    #[test]
+    fn invalid_behavior_value_is_reported() {
+        let source = EMBEDDED_CONFIG.replace("dash_speed: 520.0", "dash_speed: 0.0");
+        let error = ContentCatalog::from_ron(&source).expect_err("behavior should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("enemy `runner` behavior contains a non-positive value")
+        );
     }
 }

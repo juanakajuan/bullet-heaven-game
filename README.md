@@ -25,7 +25,7 @@ incremental.
 | Action | Keyboard / Mouse |
 | --- | --- |
 | Move | WASD or arrows |
-| Navigate | WASD, arrows, or mouse |
+| Navigate | Arrows or mouse |
 | Confirm | Enter, Space, or click |
 | Back / Pause | Escape |
 | Fullscreen | F11 or Settings menu |
@@ -38,7 +38,7 @@ Development builds also include:
 | F2 | Grant 100 XP |
 | F3 | Toggle invulnerability |
 | F4 | Advance the run by 60 seconds |
-| F5 | Spawn a test wave |
+| F5 | Spawn a mixed test wave |
 | F6 | Toggle collider/spatial-cell outlines |
 | F9 | Reload `assets/config/game.ron` |
 
@@ -47,7 +47,7 @@ Development builds also include:
 - Ten-minute, seeded survival runs
 - Automatic Bolt, Nova, and Orbit weapons with five levels each
 - Six five-level stat upgrades and three-choice level-up drafts
-- Three regular enemy archetypes and a charge/burst boss
+- Pursuer, telegraphed dasher, and ranged shooter enemies plus a charge/burst boss
 - XP gems, rare healing drops, contact damage, and invulnerability frames
 - Time-based spawn stages, arena boundaries, victory/defeat, and seed retry
 - Keyboard movement and keyboard/mouse menus
@@ -101,6 +101,15 @@ BULLET_HEAVEN_SMOKE_SECONDS=8 cargo run
 
 It starts seed `0xB011E7`, runs the real renderer and simulation, then exits
 successfully.
+
+Set `BULLET_HEAVEN_SMOKE_START_SECONDS` to exercise a later spawn stage without
+waiting through the full run:
+
+```sh
+BULLET_HEAVEN_SMOKE_SECONDS=8 BULLET_HEAVEN_SMOKE_START_SECONDS=180 cargo run
+```
+
+Accelerated smoke runs enable invulnerability and the diagnostics overlay.
 
 ## Packaging
 

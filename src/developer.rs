@@ -28,6 +28,8 @@ struct DeveloperText;
 #[derive(Resource)]
 struct SmokeTest {
     exit_after_seconds: f32,
+    start_at_seconds: f32,
+    run_initialized: bool,
 }
 
 pub struct DeveloperPlugin;
@@ -101,11 +103,14 @@ fn debug_shortcuts(
     }
     if keys.just_pressed(KeyCode::F5)
         && let Ok(player) = player.single()
-        && let Some(enemy) = catalog.config.enemies.first()
+        && !catalog.config.enemies.is_empty()
     {
-        for index in 0..12 {
-            let angle = index as f32 * std::f32::consts::TAU / 12.0;
+        const COPIES_PER_ARCHETYPE: usize = 4;
+        let enemy_count = catalog.config.enemies.len() * COPIES_PER_ARCHETYPE;
+        for index in 0..enemy_count {
+            let angle = index as f32 * std::f32::consts::TAU / enemy_count as f32;
             let position = player.translation.truncate() + Vec2::from_angle(angle) * 360.0;
+            let enemy = &catalog.config.enemies[index % catalog.config.enemies.len()];
             spawn_enemy(&mut commands, enemy, position, false);
         }
     }
@@ -151,7 +156,7 @@ fn update_overlay(
         **text = format!(
             "{fps:.0} FPS  |  {} entities  |  {} enemies\n{run_text}\n\
              F1 overlay  F2 +XP  F3 invulnerable: {}\n\
-             F4 +60s  F5 spawn wave  F6 collisions: {}",
+             F4 +60s  F5 mixed wave  F6 collisions: {}",
             entities.iter().count(),
             enemies.iter().count(),
             settings.invulnerable,
@@ -198,6 +203,8 @@ fn configure_smoke_test(
     mut commands: Commands,
     mut request: ResMut<RunRequest>,
     mut next_state: ResMut<NextState<GameState>>,
+    mut settings: ResMut<DeveloperSettings>,
+    catalog: Res<ContentCatalog>,
 ) {
     let Ok(value) = std::env::var("BULLET_HEAVEN_SMOKE_SECONDS") else {
         return;
@@ -206,20 +213,52 @@ fn configure_smoke_test(
         warn!("BULLET_HEAVEN_SMOKE_SECONDS must be a number");
         return;
     };
+    if !exit_after_seconds.is_finite() || exit_after_seconds <= 0.0 {
+        warn!("BULLET_HEAVEN_SMOKE_SECONDS must be finite and positive");
+        return;
+    }
+    let start_at_seconds = match std::env::var("BULLET_HEAVEN_SMOKE_START_SECONDS") {
+        Ok(value) => {
+            let Ok(value) = value.parse::<f32>() else {
+                warn!("BULLET_HEAVEN_SMOKE_START_SECONDS must be a number");
+                return;
+            };
+            if !value.is_finite() || value < 0.0 {
+                warn!("BULLET_HEAVEN_SMOKE_START_SECONDS must be finite and non-negative");
+                return;
+            }
+            value.min(catalog.config.run.duration_seconds)
+        }
+        Err(_) => 0.0,
+    };
     request.request_seed(0x00B0_11E7);
     next_state.set(GameState::Playing);
-    commands.insert_resource(SmokeTest { exit_after_seconds });
+    settings.invulnerable = start_at_seconds > 0.0;
+    settings.overlay_visible = start_at_seconds > 0.0;
+    commands.insert_resource(SmokeTest {
+        exit_after_seconds,
+        start_at_seconds,
+        run_initialized: false,
+    });
 }
 
 fn run_smoke_test(
-    smoke: Option<Res<SmokeTest>>,
+    smoke: Option<ResMut<SmokeTest>>,
+    mut run: Option<ResMut<RunStats>>,
     time: Res<Time>,
     mut elapsed: Local<f32>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(smoke) = smoke else {
+    let Some(mut smoke) = smoke else {
         return;
     };
+    if !smoke.run_initialized {
+        let Some(run) = &mut run else {
+            return;
+        };
+        run.elapsed_seconds = smoke.start_at_seconds;
+        smoke.run_initialized = true;
+    }
     *elapsed += time.delta_secs();
     if *elapsed >= smoke.exit_after_seconds {
         info!("smoke test completed after {:.2}s", *elapsed);
