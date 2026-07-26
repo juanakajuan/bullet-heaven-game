@@ -389,32 +389,7 @@ fn validate_enemy(enemy: &EnemyConfig, errors: &mut Vec<String>) {
         errors.push(format!("enemy `{}` contains a non-positive stat", enemy.id));
     }
 
-    let valid_behavior = match enemy.behavior {
-        EnemyBehavior::Pursuer => true,
-        EnemyBehavior::Dasher {
-            cooldown_seconds,
-            telegraph_seconds,
-            dash_speed,
-            dash_seconds,
-        } => {
-            cooldown_seconds > 0.0
-                && telegraph_seconds > 0.0
-                && dash_speed > 0.0
-                && dash_seconds > 0.0
-        }
-        EnemyBehavior::Shooter {
-            stand_off_distance,
-            cooldown_seconds,
-            projectile_damage,
-            projectile_speed,
-        } => {
-            stand_off_distance > 0.0
-                && cooldown_seconds > 0.0
-                && projectile_damage > 0.0
-                && projectile_speed > 0.0
-        }
-    };
-    if !valid_behavior {
+    if !enemy.behavior.has_valid_values() {
         errors.push(format!(
             "enemy `{}` behavior contains a non-positive value",
             enemy.id

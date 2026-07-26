@@ -6,8 +6,10 @@
 - [ ] Give it a unique ID, stats, color, shape, and behavior.
 - [ ] Reference its ID from one or more stage weight tables.
 - [ ] Reuse `pursuer`, `dasher`, or `shooter` when one fits.
-- [ ] For a new behavior, add an `EnemyBehavior` variant and validation.
-- [ ] Keep runtime cooldowns and phases in private `EnemyBrain` state.
+- [ ] For a new behavior, add an `EnemyBehavior` variant.
+- [ ] Keep validation, runtime phases, movement, and attacks in the regular
+      enemy behavior module.
+- [ ] Expose only presentation-safe telegraph state across the seam.
 - [ ] Add a focused headless behavioral test.
 
 ## Add a spawn stage

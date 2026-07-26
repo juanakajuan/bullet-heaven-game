@@ -6,8 +6,8 @@ use crate::{
     ContentCatalog,
     config::EnemyShape,
     gameplay::{
-        ArenaMarker, BossBrain, Collider, DamageApplied, Enemy, EnemyBrain, HostileProjectile,
-        Orbiting, Pickup, Player, PlayerProjectile, RunEntity,
+        ArenaMarker, BossBrain, Collider, DamageApplied, Enemy, HostileProjectile, Orbiting,
+        Pickup, Player, PlayerProjectile, RegularEnemyTelegraph, RunEntity,
     },
 };
 
@@ -336,16 +336,12 @@ fn show_boss_telegraph(
 fn show_enemy_telegraphs(
     time: Res<Time>,
     catalog: Res<ContentCatalog>,
-    mut enemies: Query<(&Enemy, &EnemyBrain, &mut Sprite), Without<HitFlash>>,
+    mut enemies: Query<(&Enemy, &RegularEnemyTelegraph, &mut Sprite), Without<HitFlash>>,
 ) {
-    for (enemy, brain, mut sprite) in &mut enemies {
+    for (enemy, telegraph, mut sprite) in &mut enemies {
         let base_color = rgb(catalog.enemy(&enemy.id).color);
-        sprite.color = telegraph_color(
-            brain.is_telegraphing(),
-            time.elapsed_secs(),
-            14.0,
-            base_color,
-        );
+        sprite.color =
+            telegraph_color(telegraph.is_active(), time.elapsed_secs(), 14.0, base_color);
     }
 }
 
