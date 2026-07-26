@@ -3,7 +3,7 @@
 use bevy::{prelude::*, sprite::Text2dShadow};
 
 use crate::{
-    ContentCatalog, GameState,
+    ContentCatalog,
     config::EnemyShape,
     gameplay::{
         ArenaMarker, BossBrain, Collider, DamageApplied, Enemy, EnemyBrain, HostileProjectile,
@@ -18,6 +18,8 @@ const ORBIT_COLOR: Color = Color::srgb(1.0, 0.76, 0.24);
 const HOSTILE_PROJECTILE_COLOR: Color = Color::srgb(1.0, 0.26, 0.36);
 const XP_COLOR: Color = Color::srgb(0.25, 0.90, 0.82);
 const HEAL_COLOR: Color = Color::srgb(0.42, 0.96, 0.46);
+const HIT_FLASH_DURATION: f32 = 0.08;
+const PARTICLE_LIFETIME: f32 = 0.18;
 
 #[derive(Component)]
 struct GameCamera;
@@ -68,53 +70,44 @@ fn add_arena_visuals(
     catalog: Res<ContentCatalog>,
     arenas: Query<Entity, Added<ArenaMarker>>,
 ) {
+    let arena_width = catalog.config.arena.width;
+    let arena_height = catalog.config.arena.height;
+    let arena_size = Vec2::new(arena_width, arena_height);
+    let half_size = arena_size * 0.5;
+
     for arena in &arenas {
         commands.entity(arena).insert(Sprite::from_color(
             Color::srgb(0.035, 0.05, 0.075),
-            Vec2::new(catalog.config.arena.width, catalog.config.arena.height),
+            arena_size,
         ));
 
-        let half_width = catalog.config.arena.width * 0.5;
-        let half_height = catalog.config.arena.height * 0.5;
         let grid_color = Color::srgba(0.3, 0.45, 0.62, 0.10);
         let boundary_color = Color::srgba(0.44, 0.75, 0.96, 0.50);
 
-        let mut x = -half_width;
-        while x <= half_width {
+        let mut x = -half_size.x;
+        while x <= half_size.x {
             commands.spawn((
                 RunEntity,
-                Sprite::from_color(grid_color, Vec2::new(1.0, catalog.config.arena.height)),
+                Sprite::from_color(grid_color, Vec2::new(1.0, arena_height)),
                 Transform::from_xyz(x, 0.0, 0.5),
             ));
             x += 160.0;
         }
-        let mut y = -half_height;
-        while y <= half_height {
+        let mut y = -half_size.y;
+        while y <= half_size.y {
             commands.spawn((
                 RunEntity,
-                Sprite::from_color(grid_color, Vec2::new(catalog.config.arena.width, 1.0)),
+                Sprite::from_color(grid_color, Vec2::new(arena_width, 1.0)),
                 Transform::from_xyz(0.0, y, 0.5),
             ));
             y += 160.0;
         }
 
         for (position, size) in [
-            (
-                Vec2::new(-half_width, 0.0),
-                Vec2::new(5.0, catalog.config.arena.height),
-            ),
-            (
-                Vec2::new(half_width, 0.0),
-                Vec2::new(5.0, catalog.config.arena.height),
-            ),
-            (
-                Vec2::new(0.0, -half_height),
-                Vec2::new(catalog.config.arena.width, 5.0),
-            ),
-            (
-                Vec2::new(0.0, half_height),
-                Vec2::new(catalog.config.arena.width, 5.0),
-            ),
+            (Vec2::new(-half_size.x, 0.0), Vec2::new(5.0, arena_height)),
+            (Vec2::new(half_size.x, 0.0), Vec2::new(5.0, arena_height)),
+            (Vec2::new(0.0, -half_size.y), Vec2::new(arena_width, 5.0)),
+            (Vec2::new(0.0, half_size.y), Vec2::new(arena_width, 5.0)),
         ] {
             commands.spawn((
                 RunEntity,
@@ -145,7 +138,7 @@ fn add_enemy_visuals(
         } else {
             catalog.enemy(&enemy.id)
         };
-        let color = Color::srgb(config.color[0], config.color[1], config.color[2]);
+        let color = rgb(config.color);
         let size = if enemy.is_boss {
             Vec2::splat(collider.radius * 1.85)
         } else {
@@ -264,7 +257,7 @@ fn create_hit_feedback(
             let original = sprite.color;
             sprite.color = Color::WHITE;
             commands.entity(message.target).insert(HitFlash {
-                remaining: 0.08,
+                remaining: HIT_FLASH_DURATION,
                 original,
             });
         }
@@ -275,7 +268,7 @@ fn create_hit_feedback(
                 RunEntity,
                 Particle {
                     velocity: Vec2::from_angle(angle) * 55.0,
-                    remaining: 0.18,
+                    remaining: PARTICLE_LIFETIME,
                 },
                 Sprite::from_color(Color::srgba(0.82, 0.94, 1.0, 0.8), Vec2::splat(3.0)),
                 Transform::from_xyz(message.position.x, message.position.y, 20.0),
@@ -303,12 +296,13 @@ fn update_particles(
     time: Res<Time>,
     mut particles: Query<(Entity, &mut Particle, &mut Transform, &mut Sprite)>,
 ) {
+    let delta_seconds = time.delta_secs();
     for (entity, mut particle, mut transform, mut sprite) in &mut particles {
-        particle.remaining -= time.delta_secs();
-        transform.translation += particle.velocity.extend(0.0) * time.delta_secs();
+        particle.remaining -= delta_seconds;
+        transform.translation += particle.velocity.extend(0.0) * delta_seconds;
         sprite.color = sprite
             .color
-            .with_alpha((particle.remaining / 0.18).clamp(0.0, 1.0));
+            .with_alpha((particle.remaining / PARTICLE_LIFETIME).clamp(0.0, 1.0));
         if particle.remaining <= 0.0 {
             commands.entity(entity).despawn();
         }
@@ -330,11 +324,12 @@ fn show_boss_telegraph(
     mut bosses: Query<(&BossBrain, &mut Sprite), Without<HitFlash>>,
 ) {
     for (brain, mut sprite) in &mut bosses {
-        sprite.color = if brain.is_telegraphing() && (time.elapsed_secs() * 12.0) as i32 % 2 == 0 {
-            Color::WHITE
-        } else {
-            Color::srgb(0.95, 0.24, 0.36)
-        };
+        sprite.color = telegraph_color(
+            brain.is_telegraphing(),
+            time.elapsed_secs(),
+            12.0,
+            Color::srgb(0.95, 0.24, 0.36),
+        );
     }
 }
 
@@ -344,16 +339,29 @@ fn show_enemy_telegraphs(
     mut enemies: Query<(&Enemy, &EnemyBrain, &mut Sprite), Without<HitFlash>>,
 ) {
     for (enemy, brain, mut sprite) in &mut enemies {
-        let color = catalog.enemy(&enemy.id).color;
-        sprite.color = if brain.is_telegraphing() && (time.elapsed_secs() * 14.0) as i32 % 2 == 0 {
-            Color::WHITE
-        } else {
-            Color::srgb(color[0], color[1], color[2])
-        };
+        let base_color = rgb(catalog.enemy(&enemy.id).color);
+        sprite.color = telegraph_color(
+            brain.is_telegraphing(),
+            time.elapsed_secs(),
+            14.0,
+            base_color,
+        );
     }
 }
 
-#[allow(dead_code)]
-fn _state_documentation(_: GameState) {
-    // Keeps this module's intended applicability clear in generated docs.
+fn rgb([red, green, blue]: [f32; 3]) -> Color {
+    Color::srgb(red, green, blue)
+}
+
+fn telegraph_color(
+    is_telegraphing: bool,
+    elapsed_seconds: f32,
+    flashes_per_second: f32,
+    base_color: Color,
+) -> Color {
+    if is_telegraphing && (elapsed_seconds * flashes_per_second) as i32 % 2 == 0 {
+        Color::WHITE
+    } else {
+        base_color
+    }
 }

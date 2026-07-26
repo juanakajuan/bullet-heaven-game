@@ -100,20 +100,24 @@ fn debug_shortcuts(
         }
     }
     if keys.just_pressed(KeyCode::F4)
-        && let Some(run) = &mut run
+        && let Some(run_stats) = &mut run
     {
-        run.elapsed_seconds = (run.elapsed_seconds + 60.0).min(catalog.config.run.duration_seconds);
+        run_stats.elapsed_seconds =
+            (run_stats.elapsed_seconds + 60.0).min(catalog.config.run.duration_seconds);
     }
     if keys.just_pressed(KeyCode::F5)
-        && let Ok((player, _)) = players.single_mut()
+        && let Ok((player_transform, _)) = players.single_mut()
         && !catalog.config.enemies.is_empty()
     {
         const COPIES_PER_ARCHETYPE: usize = 4;
-        let enemy_count = catalog.config.enemies.len() * COPIES_PER_ARCHETYPE;
+        let enemy_archetypes = &catalog.config.enemies;
+        let enemy_count = enemy_archetypes.len() * COPIES_PER_ARCHETYPE;
+
         for index in 0..enemy_count {
             let angle = index as f32 * std::f32::consts::TAU / enemy_count as f32;
-            let position = player.translation.truncate() + Vec2::from_angle(angle) * 360.0;
-            let enemy = &catalog.config.enemies[index % catalog.config.enemies.len()];
+            let position =
+                player_transform.translation.truncate() + Vec2::from_angle(angle) * 360.0;
+            let enemy = &enemy_archetypes[index % enemy_archetypes.len()];
             spawn_enemy(&mut commands, enemy, position, false);
         }
     }
@@ -148,15 +152,15 @@ fn update_overlay(
         .unwrap_or_default();
     let run_text = run.as_ref().map_or_else(
         || "no active run".to_owned(),
-        |run| {
+        |run_stats| {
             format!(
                 "time {:.1}s  level {}  seed {}",
-                run.elapsed_seconds, run.level, run.seed
+                run_stats.elapsed_seconds, run_stats.level, run_stats.seed
             )
         },
     );
-    for mut text in &mut text {
-        **text = format!(
+    for mut developer_text in &mut text {
+        **developer_text = format!(
             "{fps:.0} FPS  |  {} entities  |  {} enemies\n{run_text}\n\
              F1 overlay  F2 +XP  F3 invulnerable: {}\n\
              F4 +60s  F5 mixed wave  F6 collisions: {}",
@@ -186,17 +190,19 @@ fn draw_collision_overlay(
         return;
     }
 
+    const CELL_SIZE: f32 = 128.0;
+
     let mut cells = std::collections::HashSet::new();
     for (transform, collider) in &colliders {
         let position = transform.translation.truncate();
         gizmos.circle_2d(position, collider.radius, Color::srgba(0.3, 0.9, 1.0, 0.8));
-        cells.insert((position / 128.0).floor().as_ivec2());
+        cells.insert((position / CELL_SIZE).floor().as_ivec2());
     }
     for cell in cells {
-        let center = (cell.as_vec2() + Vec2::splat(0.5)) * 128.0;
+        let center = (cell.as_vec2() + Vec2::splat(0.5)) * CELL_SIZE;
         gizmos.rect_2d(
             Isometry2d::from_translation(center),
-            Vec2::splat(128.0),
+            Vec2::splat(CELL_SIZE),
             Color::srgba(0.3, 0.7, 0.9, 0.16),
         );
     }
@@ -236,8 +242,9 @@ fn configure_smoke_test(
     };
     request.request_seed(0x00B0_11E7);
     next_state.set(GameState::Playing);
-    settings.invulnerable = start_at_seconds > 0.0;
-    settings.overlay_visible = start_at_seconds > 0.0;
+    let starts_in_progress = start_at_seconds > 0.0;
+    settings.invulnerable = starts_in_progress;
+    settings.overlay_visible = starts_in_progress;
     commands.insert_resource(SmokeTest {
         exit_after_seconds,
         start_at_seconds,
@@ -256,10 +263,10 @@ fn run_smoke_test(
         return;
     };
     if !smoke.run_initialized {
-        let Some(run) = &mut run else {
+        let Some(run_stats) = &mut run else {
             return;
         };
-        run.elapsed_seconds = smoke.start_at_seconds;
+        run_stats.elapsed_seconds = smoke.start_at_seconds;
         smoke.run_initialized = true;
     }
     *elapsed += time.delta_secs();

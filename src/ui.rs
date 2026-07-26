@@ -10,7 +10,7 @@ use crate::{
     ContentCatalog, GameState, Preferences,
     gameplay::{
         Enemy, Health, LevelUpChoices, Player, PlayerBuild, ResolvedStats, RunRequest, RunStats,
-        UpgradeChoice, apply_upgrade_choice, choice_text,
+        apply_upgrade_choice, choice_text,
     },
 };
 
@@ -59,13 +59,13 @@ struct FullscreenValue;
 #[derive(Component)]
 struct VsyncValue;
 
-#[derive(Component, Debug, Clone)]
+#[derive(Component, Debug, Clone, Copy)]
 struct MenuButton {
     index: usize,
     action: MenuAction,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum MenuAction {
     Start,
     Resume,
@@ -81,7 +81,7 @@ enum MenuAction {
     ResetSettings,
 }
 
-#[derive(Message, Debug, Clone)]
+#[derive(Message, Debug, Clone, Copy)]
 struct MenuActionRequested(MenuAction);
 
 #[derive(Resource, Default)]
@@ -359,7 +359,7 @@ fn spawn_button(parent: &mut ChildSpawnerCommands, index: usize, label: &str, ac
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(if index == 0 { BUTTON_SELECTED } else { BUTTON }),
+            BackgroundColor(button_color(index, 0)),
         ))
         .with_child((Text::new(label), text_style(21.0)));
 }
@@ -387,7 +387,7 @@ fn spawn_choice_button(
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(if index == 0 { BUTTON_SELECTED } else { BUTTON }),
+            BackgroundColor(button_color(index, 0)),
         ))
         .with_children(|button| {
             button.spawn((Text::new(name), text_style(22.0)));
@@ -419,7 +419,7 @@ fn spawn_setting_button<M: Component>(
                 justify_content: JustifyContent::SpaceBetween,
                 ..default()
             },
-            BackgroundColor(if index == 0 { BUTTON_SELECTED } else { BUTTON }),
+            BackgroundColor(button_color(index, 0)),
         ))
         .with_children(|button| {
             button.spawn((Text::new(label), text_style(19.0)));
@@ -442,7 +442,7 @@ fn mouse_menu_input(
         match interaction {
             Interaction::Pressed => {
                 selection.0 = button.index;
-                requested.write(MenuActionRequested(button.action.clone()));
+                requested.write(MenuActionRequested(button.action));
             }
             Interaction::Hovered => selection.0 = button.index,
             Interaction::None => {}
@@ -474,7 +474,7 @@ fn keyboard_menu_input(
             selection.0 = (selection.0 + 1) % count;
         }
         if confirm && let Some(button) = buttons.iter().find(|button| button.index == selection.0) {
-            requested.write(MenuActionRequested(button.action.clone()));
+            requested.write(MenuActionRequested(button.action));
         }
     }
 
@@ -537,21 +537,23 @@ fn handle_menu_actions(
             }
             MenuAction::ToggleFullscreen => {
                 preferences.fullscreen = !preferences.fullscreen;
-                apply_preferences_to_window(&preferences, &mut window);
-                preferences.save();
+                apply_and_save_preferences(&preferences, &mut window);
             }
             MenuAction::ToggleVsync => {
                 preferences.vsync = !preferences.vsync;
-                apply_preferences_to_window(&preferences, &mut window);
-                preferences.save();
+                apply_and_save_preferences(&preferences, &mut window);
             }
             MenuAction::ResetSettings => {
                 *preferences = Preferences::default();
-                apply_preferences_to_window(&preferences, &mut window);
-                preferences.save();
+                apply_and_save_preferences(&preferences, &mut window);
             }
         }
     }
+}
+
+fn apply_and_save_preferences(preferences: &Preferences, window: &mut Window) {
+    apply_preferences_to_window(preferences, window);
+    preferences.save();
 }
 
 fn apply_preferences_to_window(preferences: &Preferences, window: &mut Window) {
@@ -575,11 +577,15 @@ fn update_menu_button_colors(
         return;
     }
     for (button, mut color) in &mut buttons {
-        color.0 = if button.index == selection.0 {
-            BUTTON_SELECTED
-        } else {
-            BUTTON
-        };
+        color.0 = button_color(button.index, selection.0);
+    }
+}
+
+fn button_color(index: usize, selected_index: usize) -> Color {
+    if index == selected_index {
+        BUTTON_SELECTED
+    } else {
+        BUTTON
     }
 }
 
@@ -813,24 +819,24 @@ fn update_hud(
     for mut text in &mut stats_text {
         **text = format!("Level {}    Kills {}", run.level, run.kills);
     }
+    let weapon_text = build
+        .weapons
+        .iter()
+        .map(|weapon| format!("{} {}", catalog.weapon(&weapon.id).name, weapon.level))
+        .collect::<Vec<_>>()
+        .join("   ");
     for mut text in &mut loadout_text {
-        let weapon_text = build
-            .weapons
-            .iter()
-            .map(|weapon| format!("{} {}", catalog.weapon(&weapon.id).name, weapon.level))
-            .collect::<Vec<_>>()
-            .join("   ");
-        **text = weapon_text;
+        **text = weapon_text.clone();
     }
     if let Ok(health) = player_health.single() {
         for mut node in &mut health_fill {
-            node.width = percent(100.0 * (health.current / health.max).clamp(0.0, 1.0));
+            node.width = percent(percentage(health.current, health.max));
         }
     }
+    let experience_percentage =
+        percentage(run.experience as f32, run.experience_required.max(1) as f32);
     for mut node in &mut experience_fill {
-        node.width = percent(
-            100.0 * (run.experience as f32 / run.experience_required.max(1) as f32).clamp(0.0, 1.0),
-        );
+        node.width = percent(experience_percentage);
     }
 
     let active_boss = boss.iter().find(|(_, enemy)| enemy.is_boss);
@@ -843,17 +849,16 @@ fn update_hud(
     }
     if let Some((health, _)) = active_boss {
         for mut node in &mut boss_fill {
-            node.width = percent(100.0 * (health.current / health.max).clamp(0.0, 1.0));
+            node.width = percent(percentage(health.current, health.max));
         }
     }
+}
+
+fn percentage(current: f32, maximum: f32) -> f32 {
+    100.0 * (current / maximum).clamp(0.0, 1.0)
 }
 
 fn format_time(seconds: f32) -> String {
     let total = seconds.max(0.0) as u32;
     format!("{:02}:{:02}", total / 60, total % 60)
-}
-
-#[allow(dead_code)]
-fn _choice_is_data(choice: UpgradeChoice) -> UpgradeChoice {
-    choice
 }

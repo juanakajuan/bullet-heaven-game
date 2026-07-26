@@ -464,10 +464,10 @@ fn tick_run_clock(
     mut run: ResMut<RunStats>,
     mut players: Query<&mut Player>,
 ) {
-    run.elapsed_seconds += fixed_time.delta_secs();
+    let dt = fixed_time.delta_secs();
+    run.elapsed_seconds += dt;
     for mut player in &mut players {
-        player.invulnerability_remaining =
-            (player.invulnerability_remaining - fixed_time.delta_secs()).max(0.0);
+        player.invulnerability_remaining = (player.invulnerability_remaining - dt).max(0.0);
     }
 }
 
@@ -478,14 +478,12 @@ fn move_player(
     catalog: Res<ContentCatalog>,
     mut player: Single<&mut Transform, With<Player>>,
 ) {
-    let half = Vec2::new(
-        catalog.config.arena.width * 0.5 - catalog.config.player.radius,
-        catalog.config.arena.height * 0.5 - catalog.config.player.radius,
-    );
     let position =
         player.translation.truncate() + input.0 * stats.move_speed * fixed_time.delta_secs();
-    player.translation.x = position.x.clamp(-half.x, half.x);
-    player.translation.y = position.y.clamp(-half.y, half.y);
+    set_arena_position(
+        &mut player,
+        clamp_to_arena(position, &catalog, catalog.config.player.radius),
+    );
 }
 
 fn current_stage(catalog: &ContentCatalog, elapsed: f32) -> usize {
@@ -557,14 +555,28 @@ fn spawn_position(
     let angle = rng.random_range(0.0..TAU);
     let distance = rng.random_range(690.0..820.0);
     let target = player + Vec2::from_angle(angle) * distance;
-    let half = Vec2::new(
+    clamp_to_arena(target, catalog, radius)
+}
+
+fn clamp_to_arena(position: Vec2, catalog: &ContentCatalog, radius: f32) -> Vec2 {
+    let half_extents = Vec2::new(
         catalog.config.arena.width * 0.5 - radius,
         catalog.config.arena.height * 0.5 - radius,
     );
     Vec2::new(
-        target.x.clamp(-half.x, half.x),
-        target.y.clamp(-half.y, half.y),
+        position.x.clamp(-half_extents.x, half_extents.x),
+        position.y.clamp(-half_extents.y, half_extents.y),
     )
+}
+
+fn set_arena_position(transform: &mut Transform, position: Vec2) {
+    transform.translation.x = position.x;
+    transform.translation.y = position.y;
+}
+
+fn keep_in_arena(transform: &mut Transform, catalog: &ContentCatalog, radius: f32) {
+    let position = clamp_to_arena(transform.translation.truncate(), catalog, radius);
+    set_arena_position(transform, position);
 }
 
 pub(crate) fn spawn_enemy(
@@ -679,11 +691,10 @@ fn move_enemies(
                 },
                 EnemyBrainState::Shooter { .. },
             ) => {
-                velocity.0 = if offset.length() > stand_off_distance + SHOOTER_DISTANCE_TOLERANCE {
+                let distance = offset.length();
+                velocity.0 = if distance > stand_off_distance + SHOOTER_DISTANCE_TOLERANCE {
                     direction * definition.move_speed
-                } else if offset.length()
-                    < (stand_off_distance - SHOOTER_DISTANCE_TOLERANCE).max(0.0)
-                {
+                } else if distance < (stand_off_distance - SHOOTER_DISTANCE_TOLERANCE).max(0.0) {
                     -direction * definition.move_speed
                 } else {
                     Vec2::ZERO
@@ -693,12 +704,7 @@ fn move_enemies(
         }
 
         transform.translation += velocity.0.extend(0.0) * dt;
-        let half = Vec2::new(
-            catalog.config.arena.width * 0.5 - definition.radius,
-            catalog.config.arena.height * 0.5 - definition.radius,
-        );
-        transform.translation.x = transform.translation.x.clamp(-half.x, half.x);
-        transform.translation.y = transform.translation.y.clamp(-half.y, half.y);
+        keep_in_arena(&mut transform, &catalog, definition.radius);
     }
 }
 
@@ -714,15 +720,10 @@ fn spawn_boss(
 
     run.boss_spawned = true;
     let boss = &catalog.config.boss;
-    let position = (player.translation.truncate() + Vec2::new(0.0, 620.0)).clamp(
-        Vec2::new(
-            -catalog.config.arena.width * 0.5 + boss.enemy.radius,
-            -catalog.config.arena.height * 0.5 + boss.enemy.radius,
-        ),
-        Vec2::new(
-            catalog.config.arena.width * 0.5 - boss.enemy.radius,
-            catalog.config.arena.height * 0.5 - boss.enemy.radius,
-        ),
+    let position = clamp_to_arena(
+        player.translation.truncate() + Vec2::new(0.0, 620.0),
+        &catalog,
+        boss.enemy.radius,
     );
     spawn_enemy(&mut commands, &boss.enemy, position, true);
 }
@@ -805,12 +806,7 @@ fn update_boss(
             }
         }
 
-        let half = Vec2::new(
-            catalog.config.arena.width * 0.5 - catalog.config.boss.enemy.radius,
-            catalog.config.arena.height * 0.5 - catalog.config.boss.enemy.radius,
-        );
-        transform.translation.x = transform.translation.x.clamp(-half.x, half.x);
-        transform.translation.y = transform.translation.y.clamp(-half.y, half.y);
+        keep_in_arena(&mut transform, &catalog, catalog.config.boss.enemy.radius);
     }
 }
 
@@ -1020,19 +1016,36 @@ fn boss_burst(
         for index in 0..catalog.config.boss.burst_projectiles {
             let direction =
                 Vec2::from_angle(index as f32 * TAU / catalog.config.boss.burst_projectiles as f32);
-            commands.spawn((
-                RunEntity,
-                HostileProjectile {
-                    damage: catalog.config.boss.burst_damage,
-                    lifetime: BOSS_PROJECTILE_LIFETIME,
-                },
-                Velocity(direction * catalog.config.boss.burst_speed),
-                Collider { radius: 9.0 },
-                Transform::from_xyz(position.x, position.y, 6.0),
-                Visibility::default(),
-            ));
+            spawn_hostile_projectile(
+                &mut commands,
+                position,
+                direction,
+                catalog.config.boss.burst_damage,
+                catalog.config.boss.burst_speed,
+                9.0,
+                BOSS_PROJECTILE_LIFETIME,
+            );
         }
     }
+}
+
+fn spawn_hostile_projectile(
+    commands: &mut Commands,
+    position: Vec2,
+    direction: Vec2,
+    damage: f32,
+    speed: f32,
+    radius: f32,
+    lifetime: f32,
+) {
+    commands.spawn((
+        RunEntity,
+        HostileProjectile { damage, lifetime },
+        Velocity(direction * speed),
+        Collider { radius },
+        Transform::from_xyz(position.x, position.y, 6.0),
+        Visibility::default(),
+    ));
 }
 
 fn regular_enemy_attacks(
@@ -1074,17 +1087,15 @@ fn regular_enemy_attacks(
 
         let position = transform.translation.truncate();
         let direction = (player_position - position).normalize_or_zero();
-        commands.spawn((
-            RunEntity,
-            HostileProjectile {
-                damage: projectile_damage,
-                lifetime: ENEMY_PROJECTILE_LIFETIME,
-            },
-            Velocity(direction * projectile_speed),
-            Collider { radius: 7.0 },
-            Transform::from_xyz(position.x, position.y, 6.0),
-            Visibility::default(),
-        ));
+        spawn_hostile_projectile(
+            &mut commands,
+            position,
+            direction,
+            projectile_damage,
+            projectile_speed,
+            7.0,
+            ENEMY_PROJECTILE_LIFETIME,
+        );
     }
 }
 

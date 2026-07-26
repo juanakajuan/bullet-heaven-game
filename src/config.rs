@@ -250,27 +250,7 @@ impl ContentCatalog {
     fn validate(config: GameConfig) -> Result<Self, ConfigError> {
         let mut errors = Vec::new();
 
-        if config.arena.width < 1280.0 || config.arena.height < 720.0 {
-            errors.push("arena must be at least 1280×720 world units".into());
-        }
-        if config.run.duration_seconds <= 0.0 {
-            errors.push("run.duration_seconds must be positive".into());
-        }
-        if config.player.max_health <= 0.0 || config.player.move_speed <= 0.0 {
-            errors.push("player health and movement speed must be positive".into());
-        }
-        if config.weapons.len() < 3 {
-            errors.push("at least three weapons are required".into());
-        }
-        if config.upgrades.len() < 6 {
-            errors.push("at least six upgrades are required".into());
-        }
-        if config.enemies.len() < 3 {
-            errors.push("at least three regular enemies are required".into());
-        }
-        if config.stages.is_empty() || config.stages[0].starts_at_seconds != 0.0 {
-            errors.push("stages must begin at 0 seconds".into());
-        }
+        validate_catalog_requirements(&config, &mut errors);
 
         let weapon_indices = unique_indices(
             config.weapons.iter().map(|item| &item.id),
@@ -295,31 +275,8 @@ impl ContentCatalog {
             ));
         }
 
-        for weapon in &config.weapons {
-            if weapon.levels.len() != 5 {
-                errors.push(format!(
-                    "weapon `{}` must define exactly five levels",
-                    weapon.id
-                ));
-            }
-            for (index, level) in weapon.levels.iter().enumerate() {
-                if level.damage <= 0.0 || level.cooldown_seconds <= 0.0 || level.area_scale <= 0.0 {
-                    errors.push(format!(
-                        "weapon `{}` level {} contains a non-positive value",
-                        weapon.id,
-                        index + 1
-                    ));
-                }
-            }
-        }
-        for upgrade in &config.upgrades {
-            if upgrade.values.len() != 5 {
-                errors.push(format!(
-                    "upgrade `{}` must define exactly five values",
-                    upgrade.id
-                ));
-            }
-        }
+        validate_weapons(&config.weapons, &mut errors);
+        validate_upgrades(&config.upgrades, &mut errors);
         for enemy in config
             .enemies
             .iter()
@@ -327,25 +284,7 @@ impl ContentCatalog {
         {
             validate_enemy(enemy, &mut errors);
         }
-        for (index, stage) in config.stages.iter().enumerate() {
-            if stage.spawns_per_second <= 0.0 || stage.weights.is_empty() {
-                errors.push(format!("stage {index} must have a spawn rate and weights"));
-            }
-            if index > 0 && stage.starts_at_seconds <= config.stages[index - 1].starts_at_seconds {
-                errors.push("stage start times must be strictly ascending".into());
-            }
-            for weight in &stage.weights {
-                if !enemy_indices.contains_key(&weight.enemy) {
-                    errors.push(format!(
-                        "stage {index} references missing enemy `{}`",
-                        weight.enemy
-                    ));
-                }
-                if weight.weight == 0 {
-                    errors.push(format!("stage {index} contains a zero spawn weight"));
-                }
-            }
-        }
+        validate_stages(&config.stages, &enemy_indices, &mut errors);
 
         if !errors.is_empty() {
             return Err(ConfigError::Validation(errors));
@@ -357,6 +296,87 @@ impl ContentCatalog {
             upgrade_indices,
             enemy_indices,
         })
+    }
+}
+
+fn validate_catalog_requirements(config: &GameConfig, errors: &mut Vec<String>) {
+    if config.arena.width < 1280.0 || config.arena.height < 720.0 {
+        errors.push("arena must be at least 1280×720 world units".into());
+    }
+    if config.run.duration_seconds <= 0.0 {
+        errors.push("run.duration_seconds must be positive".into());
+    }
+    if config.player.max_health <= 0.0 || config.player.move_speed <= 0.0 {
+        errors.push("player health and movement speed must be positive".into());
+    }
+    if config.weapons.len() < 3 {
+        errors.push("at least three weapons are required".into());
+    }
+    if config.upgrades.len() < 6 {
+        errors.push("at least six upgrades are required".into());
+    }
+    if config.enemies.len() < 3 {
+        errors.push("at least three regular enemies are required".into());
+    }
+    if config.stages.is_empty() || config.stages[0].starts_at_seconds != 0.0 {
+        errors.push("stages must begin at 0 seconds".into());
+    }
+}
+
+fn validate_weapons(weapons: &[WeaponConfig], errors: &mut Vec<String>) {
+    for weapon in weapons {
+        if weapon.levels.len() != 5 {
+            errors.push(format!(
+                "weapon `{}` must define exactly five levels",
+                weapon.id
+            ));
+        }
+        for (index, level) in weapon.levels.iter().enumerate() {
+            if level.damage <= 0.0 || level.cooldown_seconds <= 0.0 || level.area_scale <= 0.0 {
+                errors.push(format!(
+                    "weapon `{}` level {} contains a non-positive value",
+                    weapon.id,
+                    index + 1
+                ));
+            }
+        }
+    }
+}
+
+fn validate_upgrades(upgrades: &[UpgradeConfig], errors: &mut Vec<String>) {
+    for upgrade in upgrades {
+        if upgrade.values.len() != 5 {
+            errors.push(format!(
+                "upgrade `{}` must define exactly five values",
+                upgrade.id
+            ));
+        }
+    }
+}
+
+fn validate_stages(
+    stages: &[StageConfig],
+    enemy_indices: &HashMap<EnemyId, usize>,
+    errors: &mut Vec<String>,
+) {
+    for (index, stage) in stages.iter().enumerate() {
+        if stage.spawns_per_second <= 0.0 || stage.weights.is_empty() {
+            errors.push(format!("stage {index} must have a spawn rate and weights"));
+        }
+        if index > 0 && stage.starts_at_seconds <= stages[index - 1].starts_at_seconds {
+            errors.push("stage start times must be strictly ascending".into());
+        }
+        for weight in &stage.weights {
+            if !enemy_indices.contains_key(&weight.enemy) {
+                errors.push(format!(
+                    "stage {index} references missing enemy `{}`",
+                    weight.enemy
+                ));
+            }
+            if weight.weight == 0 {
+                errors.push(format!("stage {index} contains a zero spawn weight"));
+            }
+        }
     }
 }
 
