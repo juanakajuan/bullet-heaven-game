@@ -39,6 +39,12 @@ Only `Playing` runs gameplay systems. UI and real-time presentation continue
 while paused or choosing an upgrade. A `RunRequest` distinguishes entering
 `Playing` to start/retry a run from returning to it after pause or level-up.
 
+The level-up module owns the complete transition from reaching an XP threshold
+through drafting, presenting, and applying a choice. Its UI interface is
+display-ready choice data plus a selection message. The UI does not mutate the
+player build, reconcile health and derived stats, clear choices, or resume the
+run.
+
 ## Fixed simulation
 
 Gameplay runs at 60 Hz in explicitly ordered sets:
@@ -99,9 +105,9 @@ replaceable if profiling later justifies a different implementation.
 ## Derived player stats
 
 Player stats are recalculated from immutable base configuration plus the
-current authored upgrade value. Systems consume `ResolvedStats`; they do not
-incrementally mutate derived values. Reordering or removing upgrades therefore
-cannot leave stale bonuses behind.
+current authored upgrade value inside the level-up module. Systems consume
+`ResolvedStats`; they do not incrementally mutate derived values. Reordering or
+removing upgrades therefore cannot leave stale bonuses behind.
 
 ## Configuration and persistence
 
@@ -116,9 +122,9 @@ preferences fall back to defaults and never prevent play.
 
 ## Verification strategy
 
-- Pure tests cover XP curves, deterministic drafts, stat resolution, parsing,
-  validation, and preference defaults.
+- Pure tests cover parsing, validation, and preference defaults.
 - Headless Bevy tests cross the actual gameplay interface: requested run
-  creation, fixed simulation/spawning, and boss transition.
+  creation, complete deterministic level-up flows, fixed simulation/spawning,
+  regular enemy behavior, and boss transition.
 - The native smoke mode runs the real renderer, window, UI, and simulation.
 - CI formats, lints, tests, and compile-checks all desktop targets.

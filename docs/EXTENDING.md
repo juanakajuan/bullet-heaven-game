@@ -22,10 +22,10 @@
 ## Add a stat upgrade
 
 - [ ] Add an `UpgradeKind` variant and corresponding `ResolvedStats` field.
-- [ ] Handle the variant in `resolve_stats`.
+- [ ] Handle the variant in the level-up module's derived-stat resolution.
 - [ ] Add five authored values to the RON catalog.
 - [ ] Keep the resolved value derived from base configuration.
-- [ ] Add a focused stat-resolution test.
+- [ ] Add a focused headless level-up flow test.
 
 ## Add a weapon
 

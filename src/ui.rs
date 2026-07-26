@@ -9,8 +9,7 @@ use bevy::{
 use crate::{
     ContentCatalog, GameState, Preferences,
     gameplay::{
-        Enemy, Health, LevelUpChoices, Player, PlayerBuild, ResolvedStats, RunRequest, RunStats,
-        apply_upgrade_choice, choice_text,
+        Enemy, Health, LevelUp, LevelUpChoiceSelected, Player, PlayerBuild, RunRequest, RunStats,
     },
 };
 
@@ -199,14 +198,10 @@ fn spawn_pause_menu(mut commands: Commands, mut selection: ResMut<MenuSelection>
 
 fn spawn_level_up(
     mut commands: Commands,
-    catalog: Res<ContentCatalog>,
-    build: Res<PlayerBuild>,
-    choices: Res<LevelUpChoices>,
+    level_up: Res<LevelUp>,
     mut selection: ResMut<MenuSelection>,
 ) {
-    selection.0 = choices
-        .selected
-        .min(choices.choices.len().saturating_sub(1));
+    selection.0 = 0;
     commands
         .spawn((MenuRoot, overlay_panel(), BackgroundColor(PANEL)))
         .with_children(|root| {
@@ -223,9 +218,8 @@ fn spawn_level_up(
                 text_font(18.0),
                 TextColor(MUTED_TEXT),
             ));
-            for (index, choice) in choices.choices.iter().enumerate() {
-                let (name, description) = choice_text(choice, &catalog, &build);
-                spawn_choice_button(root, index, &name, &description);
+            for (index, choice) in level_up.choices().enumerate() {
+                spawn_choice_button(root, index, &choice.title, &choice.description);
             }
         });
 }
@@ -490,11 +484,7 @@ fn handle_menu_actions(
     mut next_state: ResMut<NextState<GameState>>,
     mut run_request: ResMut<RunRequest>,
     run: Option<Res<RunStats>>,
-    catalog: Res<ContentCatalog>,
-    mut build: Option<ResMut<PlayerBuild>>,
-    mut stats: Option<ResMut<ResolvedStats>>,
-    mut choices: ResMut<LevelUpChoices>,
-    mut player_health: Query<&mut Health, With<Player>>,
+    mut level_up_selections: MessageWriter<LevelUpChoiceSelected>,
     mut preferences: ResMut<Preferences>,
     mut settings_return: ResMut<SettingsReturn>,
     mut window: Single<&mut Window>,
@@ -523,17 +513,7 @@ fn handle_menu_actions(
                 exit.write(AppExit::Success);
             }
             MenuAction::ChooseUpgrade(index) => {
-                let Some(choice) = choices.choices.get(index).cloned() else {
-                    continue;
-                };
-                let (Some(build), Some(stats), Ok(mut health)) =
-                    (&mut build, &mut stats, player_health.single_mut())
-                else {
-                    continue;
-                };
-                **stats = apply_upgrade_choice(&choice, &catalog, build, &mut health);
-                choices.choices.clear();
-                next_state.set(GameState::Playing);
+                level_up_selections.write(LevelUpChoiceSelected(index));
             }
             MenuAction::ToggleFullscreen => {
                 preferences.fullscreen = !preferences.fullscreen;

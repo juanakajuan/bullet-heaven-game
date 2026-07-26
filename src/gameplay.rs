@@ -4,8 +4,10 @@
 //! presentation details. Tests can therefore exercise the same interface
 //! without a window or GPU.
 
+mod level_up;
 mod regular_enemy_behavior;
 
+pub(crate) use level_up::{LevelUp, LevelUpChoiceSelected};
 pub(crate) use regular_enemy_behavior::RegularEnemyTelegraph;
 
 use std::{
@@ -15,16 +17,15 @@ use std::{
 };
 
 use bevy::prelude::*;
-use rand::{RngExt, SeedableRng, seq::SliceRandom};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::{
     ContentCatalog, EnemyId, GameState, GameplaySet, UpgradeId, WeaponId,
-    config::{EnemyConfig, UpgradeKind, WeaponKind},
+    config::{EnemyConfig, WeaponKind},
     input::MovementInput,
 };
 
-const WEAPON_SLOT_LIMIT: usize = 3;
 const SPATIAL_CELL_SIZE: f32 = 128.0;
 const PROJECTILE_LIFETIME: f32 = 2.4;
 const BOSS_PROJECTILE_LIFETIME: f32 = 7.0;
@@ -174,7 +175,6 @@ impl RunRequest {
 struct RngStreams {
     spawn: ChaCha8Rng,
     loot: ChaCha8Rng,
-    upgrade: ChaCha8Rng,
 }
 
 impl RngStreams {
@@ -182,7 +182,6 @@ impl RngStreams {
         Self {
             spawn: ChaCha8Rng::seed_from_u64(seed ^ 0x0053_5041_574E),
             loot: ChaCha8Rng::seed_from_u64(seed ^ 0x4C4F_4F54),
-            upgrade: ChaCha8Rng::seed_from_u64(seed ^ 0x0055_5047_5241_4445),
         }
     }
 }
@@ -212,19 +211,6 @@ impl SpatialGrid {
             })
         })
     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum UpgradeChoice {
-    Weapon(WeaponId),
-    Stat(UpgradeId),
-    Heal,
-}
-
-#[derive(Resource, Debug, Default)]
-pub(crate) struct LevelUpChoices {
-    pub choices: Vec<UpgradeChoice>,
-    pub selected: usize,
 }
 
 #[derive(Message, Debug, Clone, Copy)]
@@ -260,9 +246,9 @@ pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {
     fn build(&self, app: &mut App) {
+        level_up::configure(app);
         regular_enemy_behavior::configure(app);
         app.init_resource::<RunRequest>()
-            .init_resource::<LevelUpChoices>()
             .init_resource::<SpawnClock>()
             .init_resource::<SpatialGrid>()
             .add_message::<DamageRequested>()
@@ -299,9 +285,6 @@ impl Plugin for GameplayPlugin {
                         .in_set(GameplaySet::Damage)
                         .after(apply_damage),
                     apply_collected_experience.in_set(GameplaySet::Progression),
-                    request_level_up
-                        .in_set(GameplaySet::Progression)
-                        .after(apply_collected_experience),
                     expire_temporary_entities.in_set(GameplaySet::Cleanup),
                 )
                     .run_if(in_state(GameState::Playing)),
@@ -320,6 +303,7 @@ fn start_requested_run(
     mut commands: Commands,
     mut request: ResMut<RunRequest>,
     catalog: Res<ContentCatalog>,
+    mut level_up: ResMut<LevelUp>,
     old_entities: Query<Entity, With<RunEntity>>,
 ) {
     let Some(seed) = request.seed.take() else {
@@ -339,7 +323,8 @@ fn start_requested_run(
         }],
         upgrades: Vec::new(),
     };
-    let stats = resolve_stats(&catalog, &build);
+    let stats = level_up::initial_stats(&catalog);
+    level_up.begin_run(seed);
 
     commands.insert_resource(RunStats {
         elapsed_seconds: 0.0,
@@ -354,7 +339,6 @@ fn start_requested_run(
     commands.insert_resource(stats);
     commands.insert_resource(RngStreams::from_seed(seed));
     commands.insert_resource(SpawnClock::default());
-    commands.insert_resource(LevelUpChoices::default());
 
     commands.spawn((
         RunEntity,
@@ -379,15 +363,10 @@ fn start_requested_run(
     ));
 }
 
-fn cleanup_run(
-    mut commands: Commands,
-    entities: Query<Entity, With<RunEntity>>,
-    mut choices: ResMut<LevelUpChoices>,
-) {
+fn cleanup_run(mut commands: Commands, entities: Query<Entity, With<RunEntity>>) {
     for entity in &entities {
         commands.entity(entity).despawn();
     }
-    choices.choices.clear();
     commands.remove_resource::<RunStats>();
     commands.remove_resource::<PlayerBuild>();
     commands.remove_resource::<ResolvedStats>();
@@ -1133,181 +1112,6 @@ fn apply_collected_experience(
     }
 }
 
-fn request_level_up(
-    catalog: Res<ContentCatalog>,
-    mut run: ResMut<RunStats>,
-    build: Res<PlayerBuild>,
-    mut streams: ResMut<RngStreams>,
-    mut choices: ResMut<LevelUpChoices>,
-    mut next_state: ResMut<NextState<GameState>>,
-) {
-    if run.experience < run.experience_required || !choices.choices.is_empty() {
-        return;
-    }
-
-    run.experience -= run.experience_required;
-    run.level += 1;
-    run.experience_required = experience_required(&catalog, run.level);
-    choices.choices = draft_choices(&catalog, &build, &mut streams.upgrade);
-    choices.selected = 0;
-    next_state.set(GameState::LevelUp);
-}
-
-pub(crate) fn experience_required(catalog: &ContentCatalog, level: u32) -> u32 {
-    let run = &catalog.config.run;
-    let level_index = level.saturating_sub(1) as f32;
-    (run.initial_xp_required as f32 * run.xp_exponential_growth.powf(level_index)
-        + run.xp_linear_growth as f32 * level_index)
-        .round() as u32
-}
-
-fn draft_choices(
-    catalog: &ContentCatalog,
-    build: &PlayerBuild,
-    rng: &mut ChaCha8Rng,
-) -> Vec<UpgradeChoice> {
-    let mut eligible = Vec::new();
-    for definition in &catalog.config.weapons {
-        match build
-            .weapons
-            .iter()
-            .find(|weapon| weapon.id == definition.id)
-        {
-            Some(owned) if owned.level < definition.levels.len() => {
-                eligible.push(UpgradeChoice::Weapon(definition.id.clone()));
-            }
-            None if build.weapons.len() < WEAPON_SLOT_LIMIT => {
-                eligible.push(UpgradeChoice::Weapon(definition.id.clone()));
-            }
-            _ => {}
-        }
-    }
-    for definition in &catalog.config.upgrades {
-        let current_level = build
-            .upgrades
-            .iter()
-            .find(|upgrade| upgrade.id == definition.id)
-            .map_or(0, |upgrade| upgrade.level);
-        if current_level < definition.values.len() {
-            eligible.push(UpgradeChoice::Stat(definition.id.clone()));
-        }
-    }
-
-    if eligible.is_empty() {
-        return vec![UpgradeChoice::Heal];
-    }
-    eligible.shuffle(rng);
-    eligible.truncate(3);
-    eligible
-}
-
-pub(crate) fn choice_text(
-    choice: &UpgradeChoice,
-    catalog: &ContentCatalog,
-    build: &PlayerBuild,
-) -> (String, String) {
-    match choice {
-        UpgradeChoice::Weapon(id) => {
-            let definition = catalog.weapon(id);
-            let next_level = build
-                .weapons
-                .iter()
-                .find(|weapon| weapon.id == *id)
-                .map_or(1, |weapon| weapon.level + 1);
-            (
-                format!("{}  Lv.{}", definition.name, next_level),
-                definition.description.clone(),
-            )
-        }
-        UpgradeChoice::Stat(id) => {
-            let definition = catalog.upgrade(id);
-            let next_level = build
-                .upgrades
-                .iter()
-                .find(|upgrade| upgrade.id == *id)
-                .map_or(1, |upgrade| upgrade.level + 1);
-            (
-                format!("{}  Lv.{}", definition.name, next_level),
-                definition.description.clone(),
-            )
-        }
-        UpgradeChoice::Heal => ("Recovery".into(), "Restore 30% health.".into()),
-    }
-}
-
-pub(crate) fn apply_upgrade_choice(
-    choice: &UpgradeChoice,
-    catalog: &ContentCatalog,
-    build: &mut PlayerBuild,
-    player_health: &mut Health,
-) -> ResolvedStats {
-    match choice {
-        UpgradeChoice::Weapon(id) => {
-            if let Some(weapon) = build.weapons.iter_mut().find(|weapon| weapon.id == *id) {
-                let max_level = catalog.weapon(id).levels.len();
-                weapon.level = (weapon.level + 1).min(max_level);
-                weapon.cooldown_remaining = 0.0;
-            } else if build.weapons.len() < WEAPON_SLOT_LIMIT {
-                build.weapons.push(OwnedWeapon {
-                    id: id.clone(),
-                    level: 1,
-                    cooldown_remaining: 0.0,
-                });
-            }
-        }
-        UpgradeChoice::Stat(id) => {
-            if let Some(upgrade) = build.upgrades.iter_mut().find(|upgrade| upgrade.id == *id) {
-                let max_level = catalog.upgrade(id).values.len();
-                upgrade.level = (upgrade.level + 1).min(max_level);
-            } else {
-                build.upgrades.push(OwnedUpgrade {
-                    id: id.clone(),
-                    level: 1,
-                });
-            }
-        }
-        UpgradeChoice::Heal => {
-            player_health.current =
-                (player_health.current + player_health.max * 0.3).min(player_health.max);
-        }
-    }
-
-    let previous_max = player_health.max;
-    let stats = resolve_stats(catalog, build);
-    player_health.max = stats.max_health;
-    if stats.max_health > previous_max {
-        player_health.current += stats.max_health - previous_max;
-    }
-    player_health.current = player_health.current.min(player_health.max);
-    stats
-}
-
-pub(crate) fn resolve_stats(catalog: &ContentCatalog, build: &PlayerBuild) -> ResolvedStats {
-    let player = &catalog.config.player;
-    let mut stats = ResolvedStats {
-        max_health: player.max_health,
-        move_speed: player.move_speed,
-        pickup_radius: player.pickup_radius,
-        might_multiplier: 1.0,
-        haste_multiplier: 1.0,
-        area_multiplier: 1.0,
-    };
-
-    for owned in &build.upgrades {
-        let definition = catalog.upgrade(&owned.id);
-        let value = definition.values[owned.level - 1];
-        match definition.kind {
-            UpgradeKind::Might => stats.might_multiplier = 1.0 + value,
-            UpgradeKind::Haste => stats.haste_multiplier = 1.0 + value,
-            UpgradeKind::Area => stats.area_multiplier = 1.0 + value,
-            UpgradeKind::MoveSpeed => stats.move_speed = player.move_speed * (1.0 + value),
-            UpgradeKind::MaxHealth => stats.max_health = player.max_health + value,
-            UpgradeKind::PickupRadius => stats.pickup_radius = player.pickup_radius + value,
-        }
-    }
-    stats
-}
-
 fn expire_temporary_entities(
     mut commands: Commands,
     fixed_time: Res<Time<Fixed>>,
@@ -1349,6 +1153,14 @@ mod tests {
 
     fn headless_app() -> App {
         headless_app_with_catalog(catalog())
+    }
+
+    fn headless_progression_app() -> App {
+        let mut catalog = catalog();
+        for stage in &mut catalog.config.stages {
+            stage.spawns_per_second = 0.0;
+        }
+        headless_app_with_catalog(catalog)
     }
 
     fn headless_app_with_catalog(catalog: ContentCatalog) -> App {
@@ -1420,45 +1232,150 @@ mod tests {
         app.update();
     }
 
+    fn enter_level_up(app: &mut App) {
+        let experience_required = app.world().resource::<RunStats>().experience_required;
+        app.world_mut()
+            .write_message(ExperienceCollected(experience_required));
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::LevelUp
+        );
+    }
+
+    fn choose_first_level_up(app: &mut App) {
+        app.world_mut().write_message(LevelUpChoiceSelected(0));
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<GameState>>().get(),
+            GameState::Playing
+        );
+    }
+
+    fn total_build_levels(build: &PlayerBuild) -> usize {
+        build
+            .weapons
+            .iter()
+            .map(|weapon| weapon.level)
+            .chain(build.upgrades.iter().map(|upgrade| upgrade.level))
+            .sum()
+    }
+
     #[test]
-    fn experience_curve_always_increases() {
-        let catalog = catalog();
-        let values: Vec<_> = (1..50)
-            .map(|level| experience_required(&catalog, level))
+    fn seeded_level_ups_present_the_same_choices_through_the_ui_seam() {
+        let mut left = headless_progression_app();
+        let mut right = headless_progression_app();
+        start_run(&mut left, 42);
+        start_run(&mut right, 42);
+
+        enter_level_up(&mut left);
+        enter_level_up(&mut right);
+
+        let left_choices: Vec<_> = left
+            .world()
+            .resource::<LevelUp>()
+            .choices()
+            .cloned()
             .collect();
-        assert!(values.windows(2).all(|pair| pair[1] > pair[0]));
+        let right_choices: Vec<_> = right
+            .world()
+            .resource::<LevelUp>()
+            .choices()
+            .cloned()
+            .collect();
+        assert_eq!(left_choices, right_choices);
+        assert_eq!(left_choices.len(), 3);
+        assert!(
+            left_choices
+                .iter()
+                .all(|choice| !choice.title.is_empty() && !choice.description.is_empty())
+        );
     }
 
     #[test]
-    fn seeded_drafts_repeat() {
-        let catalog = catalog();
-        let build = PlayerBuild {
-            weapons: vec![OwnedWeapon {
-                id: WeaponId("bolt".into()),
-                level: 1,
-                cooldown_remaining: 0.0,
-            }],
-            upgrades: Vec::new(),
-        };
-        let mut left = ChaCha8Rng::seed_from_u64(42);
-        let mut right = ChaCha8Rng::seed_from_u64(42);
-        let left = draft_choices(&catalog, &build, &mut left);
-        let right = draft_choices(&catalog, &build, &mut right);
-        assert_eq!(format!("{left:?}"), format!("{right:?}"));
+    fn selecting_a_level_up_applies_the_complete_flow() {
+        let mut app = headless_progression_app();
+        start_run(&mut app, 91);
+        let initial_requirement = app.world().resource::<RunStats>().experience_required;
+        let initial_build_levels = total_build_levels(app.world().resource::<PlayerBuild>());
+
+        enter_level_up(&mut app);
+
+        let run = app.world().resource::<RunStats>();
+        assert_eq!(run.level, 2);
+        assert_eq!(run.experience, 0);
+        assert!(run.experience_required > initial_requirement);
+        assert_eq!(app.world().resource::<LevelUp>().choices().len(), 3);
+
+        choose_first_level_up(&mut app);
+
+        assert_eq!(app.world().resource::<LevelUp>().choices().len(), 0);
+        assert_eq!(
+            total_build_levels(app.world().resource::<PlayerBuild>()),
+            initial_build_levels + 1
+        );
+        assert_eq!(
+            player_health(&mut app).max,
+            app.world().resource::<ResolvedStats>().max_health
+        );
     }
 
     #[test]
-    fn resolved_stats_come_from_base_plus_modifiers() {
-        let catalog = catalog();
-        let build = PlayerBuild {
-            weapons: Vec::new(),
-            upgrades: vec![OwnedUpgrade {
-                id: UpgradeId("move_speed".into()),
-                level: 2,
-            }],
-        };
-        let stats = resolve_stats(&catalog, &build);
-        assert!((stats.move_speed - catalog.config.player.move_speed * 1.16).abs() < 0.01);
+    fn experience_requirements_keep_increasing_across_complete_level_ups() {
+        let mut app = headless_progression_app();
+        start_run(&mut app, 73);
+        let mut previous_requirement = 0;
+
+        for _ in 0..20 {
+            let requirement = app.world().resource::<RunStats>().experience_required;
+            assert!(requirement > previous_requirement);
+            previous_requirement = requirement;
+            enter_level_up(&mut app);
+            choose_first_level_up(&mut app);
+        }
+    }
+
+    #[test]
+    fn a_max_health_choice_reconciles_build_stats_and_health() {
+        let mut app = headless_progression_app();
+        start_run(&mut app, 117);
+
+        for _ in 0..20 {
+            enter_level_up(&mut app);
+            let max_health_choice = app
+                .world()
+                .resource::<LevelUp>()
+                .choices()
+                .position(|choice| choice.title.starts_with("Max Health"));
+
+            let Some(index) = max_health_choice else {
+                choose_first_level_up(&mut app);
+                continue;
+            };
+
+            let previous_health = player_health(&mut app);
+            app.world_mut().write_message(LevelUpChoiceSelected(index));
+            app.update();
+            app.update();
+
+            let health = player_health(&mut app);
+            let stats = app.world().resource::<ResolvedStats>();
+            let build = app.world().resource::<PlayerBuild>();
+            assert_eq!(health.max, previous_health.max + 15.0);
+            assert_eq!(health.current, previous_health.current + 15.0);
+            assert_eq!(stats.max_health, health.max);
+            assert!(
+                build
+                    .upgrades
+                    .iter()
+                    .any(|upgrade| upgrade.id.0 == "max_health" && upgrade.level == 1)
+            );
+            return;
+        }
+
+        panic!("a deterministic draft should offer Max Health within twenty level-ups");
     }
 
     #[test]
