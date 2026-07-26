@@ -202,7 +202,6 @@ fn add_pickup_visuals(mut commands: Commands, pickups: Query<(Entity, &Pickup), 
 }
 
 fn follow_player_camera(
-    time: Res<Time>,
     catalog: Res<ContentCatalog>,
     windows: Query<&Window>,
     player: Query<&Transform, (With<Player>, Without<GameCamera>)>,
@@ -221,10 +220,8 @@ fn follow_player_camera(
     );
     let clamp = (arena_half - visible_half).max(Vec2::ZERO);
     let target = player.translation.truncate().clamp(-clamp, clamp);
-    let factor = 1.0 - (-10.0 * time.delta_secs()).exp();
-    let next = camera.translation.truncate().lerp(target, factor);
-    camera.translation.x = next.x;
-    camera.translation.y = next.y;
+    camera.translation.x = target.x;
+    camera.translation.y = target.y;
 }
 
 fn create_hit_feedback(
