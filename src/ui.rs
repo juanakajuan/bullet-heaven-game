@@ -454,8 +454,8 @@ fn keyboard_menu_input(
     mut selection: ResMut<MenuSelection>,
     mut requested: MessageWriter<MenuActionRequested>,
 ) {
-    let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
-    let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
+    let up = keys.just_pressed(KeyCode::ArrowUp);
+    let down = keys.just_pressed(KeyCode::ArrowDown);
     let confirm = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space);
     let cancel = keys.just_pressed(KeyCode::Escape);
 
