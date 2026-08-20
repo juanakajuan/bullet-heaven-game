@@ -144,6 +144,7 @@ pub(super) fn initial_stats(catalog: &ContentCatalog) -> ResolvedStats {
         max_health: player.max_health,
         move_speed: player.move_speed,
         pickup_radius: player.pickup_radius,
+        invulnerability_seconds: player.invulnerability_seconds,
         might_multiplier: 1.0,
         haste_multiplier: 1.0,
         area_multiplier: 1.0,
@@ -296,6 +297,9 @@ fn resolve_stats(catalog: &ContentCatalog, build: &PlayerBuild) -> ResolvedStats
             UpgradeKind::MoveSpeed => stats.move_speed = player.move_speed * (1.0 + value),
             UpgradeKind::MaxHealth => stats.max_health = player.max_health + value,
             UpgradeKind::PickupRadius => stats.pickup_radius = player.pickup_radius + value,
+            UpgradeKind::Invulnerability => {
+                stats.invulnerability_seconds = player.invulnerability_seconds + value;
+            }
         }
     }
     stats

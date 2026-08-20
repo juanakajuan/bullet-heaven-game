@@ -46,7 +46,7 @@ Development builds also include:
 
 - Ten-minute, seeded survival runs
 - Automatic Bolt, Nova, and Orbit weapons with five levels each
-- Six five-level stat upgrades and three-choice level-up drafts
+- Seven five-level stat upgrades and three-choice level-up drafts
 - Pursuer, telegraphed dasher, and ranged shooter enemies plus a charge/burst boss
 - XP gems, rare healing drops, contact damage, and invulnerability frames
 - Time-based spawn stages, arena boundaries, victory/defeat, and seed retry

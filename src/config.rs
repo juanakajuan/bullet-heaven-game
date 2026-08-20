@@ -114,6 +114,7 @@ pub enum UpgradeKind {
     MoveSpeed,
     MaxHealth,
     PickupRadius,
+    Invulnerability,
 }
 
 #[derive(Debug, Clone, Deserialize)]

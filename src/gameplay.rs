@@ -151,6 +151,7 @@ pub(crate) struct ResolvedStats {
     pub max_health: f32,
     pub move_speed: f32,
     pub pickup_radius: f32,
+    pub invulnerability_seconds: f32,
     pub might_multiplier: f32,
     pub haste_multiplier: f32,
     pub area_multiplier: f32,
@@ -971,7 +972,7 @@ fn collide_enemy_contact(
 
 #[allow(clippy::type_complexity)]
 fn apply_damage(
-    catalog: Res<ContentCatalog>,
+    stats: Res<ResolvedStats>,
     mut requested: MessageReader<DamageRequested>,
     mut applied: MessageWriter<DamageApplied>,
     mut deaths: MessageWriter<DeathOccurred>,
@@ -998,7 +999,7 @@ fn apply_damage(
             if player.invulnerability_remaining > 0.0 {
                 continue;
             }
-            player.invulnerability_remaining = catalog.config.player.invulnerability_seconds;
+            player.invulnerability_remaining = stats.invulnerability_seconds;
         }
 
         health.current -= request.amount;
@@ -1144,7 +1145,7 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
 
     use super::*;
-    use crate::{EnemyBehavior, input::MovementInput};
+    use crate::{EnemyBehavior, UpgradeKind, input::MovementInput};
     use regular_enemy_behavior::RegularEnemyTelegraph;
 
     fn catalog() -> ContentCatalog {
@@ -1376,6 +1377,65 @@ mod tests {
         }
 
         panic!("a deterministic draft should offer Max Health within twenty level-ups");
+    }
+
+    #[test]
+    fn an_invulnerability_choice_resolves_from_the_configured_base() {
+        let mut app = headless_progression_app();
+        start_run(&mut app, 211);
+
+        let catalog = app.world().resource::<ContentCatalog>();
+        let weapon_ids: Vec<_> = catalog
+            .config
+            .weapons
+            .iter()
+            .map(|weapon| weapon.id.clone())
+            .collect();
+        let other_upgrade_ids: Vec<_> = catalog
+            .config
+            .upgrades
+            .iter()
+            .filter(|upgrade| upgrade.kind != UpgradeKind::Invulnerability)
+            .map(|upgrade| upgrade.id.clone())
+            .collect();
+        let base = catalog.config.player.invulnerability_seconds;
+        let first_value = catalog
+            .config
+            .upgrades
+            .iter()
+            .find(|upgrade| upgrade.kind == UpgradeKind::Invulnerability)
+            .expect("invulnerability upgrade should exist")
+            .values[0];
+
+        let mut build = app.world_mut().resource_mut::<PlayerBuild>();
+        build.weapons = weapon_ids
+            .into_iter()
+            .map(|id| OwnedWeapon {
+                id,
+                level: 5,
+                cooldown_remaining: 0.0,
+            })
+            .collect();
+        build.upgrades = other_upgrade_ids
+            .into_iter()
+            .map(|id| OwnedUpgrade { id, level: 5 })
+            .collect();
+
+        enter_level_up(&mut app);
+        let choices: Vec<_> = app.world().resource::<LevelUp>().choices().collect();
+        assert_eq!(choices.len(), 1);
+        assert!(choices[0].title.starts_with("Invulnerability"));
+        choose_first_level_up(&mut app);
+
+        let stats = app.world().resource::<ResolvedStats>();
+        assert_eq!(stats.invulnerability_seconds, base + first_value);
+        assert!(
+            app.world()
+                .resource::<PlayerBuild>()
+                .upgrades
+                .iter()
+                .any(|upgrade| upgrade.id.0 == "invulnerability" && upgrade.level == 1)
+        );
     }
 
     #[test]

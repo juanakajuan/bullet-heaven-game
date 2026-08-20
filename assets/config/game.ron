@@ -66,6 +66,7 @@
         (id: "move_speed", name: "Move Speed", description: "Move faster.", kind: move_speed, values: [0.08, 0.16, 0.24, 0.32, 0.40]),
         (id: "max_health", name: "Max Health", description: "Gain maximum health and heal.", kind: max_health, values: [15.0, 30.0, 45.0, 60.0, 75.0]),
         (id: "pickup_radius", name: "Pickup Radius", description: "Collect gems from farther away.", kind: pickup_radius, values: [25.0, 50.0, 75.0, 100.0, 125.0]),
+        (id: "invulnerability", name: "Invulnerability", description: "Stay protected longer after taking damage.", kind: invulnerability, values: [0.10, 0.20, 0.30, 0.40, 0.50]),
     ],
     enemies: [
         (
