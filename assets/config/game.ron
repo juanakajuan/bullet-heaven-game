@@ -126,6 +126,7 @@
         (starts_at_seconds: 420.0, spawns_per_second: 9.5, enemy_cap: 760, weights: [(enemy: "chaser", weight: 3), (enemy: "runner", weight: 4), (enemy: "shooter", weight: 3)]),
         (starts_at_seconds: 480.0, spawns_per_second: 11.0, enemy_cap: 900, weights: [(enemy: "chaser", weight: 3), (enemy: "runner", weight: 3), (enemy: "shooter", weight: 4)]),
         (starts_at_seconds: 540.0, spawns_per_second: 12.5, enemy_cap: 1050, weights: [(enemy: "chaser", weight: 2), (enemy: "runner", weight: 4), (enemy: "shooter", weight: 4)]),
+        (starts_at_seconds: 570.0, spawns_per_second: 14.0, enemy_cap: 1200, weights: [(enemy: "chaser", weight: 2), (enemy: "runner", weight: 3), (enemy: "shooter", weight: 5)]),
     ],
     boss: (
         enemy: (

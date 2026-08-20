@@ -1414,6 +1414,18 @@ mod tests {
     }
 
     #[test]
+    fn final_spawn_stage_becomes_active_after_its_start_time() {
+        let catalog = catalog();
+        let final_stage_index = catalog.config.stages.len() - 1;
+        let final_stage = &catalog.config.stages[final_stage_index];
+
+        assert_eq!(
+            current_stage(&catalog, final_stage.starts_at_seconds + 0.1),
+            final_stage_index
+        );
+    }
+
+    #[test]
     fn dasher_telegraphs_then_charges_in_its_aimed_direction() {
         let mut catalog = catalog();
         configure_opening_stage(&mut catalog, "runner");
